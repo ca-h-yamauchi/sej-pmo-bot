@@ -40,7 +40,7 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
     
     Args:
         text: 抽出対象のテキスト
-        inquirer_name: 問合せ者のUser ID（Slack User ID）
+        inquirer_name: 問合せ者のユーザー名（表示名、実名、またはUser ID）
         
     Returns:
         抽出された情報の辞書のリスト（複数依頼に対応）
@@ -62,8 +62,8 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 以下のテキストから、アカウント申請や作業依頼に関する情報を抽出してください。
 
 【コンテキスト情報】
-この問い合わせは Slack User ID「{inquirer_name}」からのものです。
-もし「私」や「自分」のアカウント等の言及があれば、対象者のUser IDを「{inquirer_name}」として扱ってください。
+この問い合わせは「{inquirer_name}」からのものです。
+もし「私」や「自分」のアカウント等の言及があれば、対象者を「{inquirer_name}」として扱ってください。
 ただし、対象者の氏名やメールアドレスは、メッセージ本文から抽出してください。
 
 【抽出・分類ルール】
@@ -71,17 +71,21 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 2. 各エントリについて以下の情報を抽出してください：
 
 【対象者情報】
-- target_name: 対象者の氏名（「私」の場合はメッセージ本文から抽出。User ID「{inquirer_name}」のユーザーを指す可能性が高い）
+- target_name: 対象者の氏名（「私」の場合はメッセージ本文から抽出。「{inquirer_name}」を指す可能性が高い）
 - target_email: 対象者のメールアドレス（不明な場合はnull）
 - target_team: 対象者の所属チーム。以下のリストから最も適切なものを選択し、正規化して出力すること。
   * 正規化リスト: 「アプリチーム」「SREチーム」「運用保守チーム」「Lookerチーム」「営業担当」「コンサルティング部」
   * ※「インフラチーム」→「SREチーム」のように類推すること。
   * （不明な場合はnull）
 
-【分類情報】
-- category_large: 大分類（「アカウント管理」「作業依頼」「課題」のいずれか）
-- category_medium: 中分類（大分類に応じた詳細分類、不明な場合はnull）
-- category_small: 小分類（中分類に応じた詳細分類、不明な場合はnull）
+【タグ情報】
+この問い合わせの属性を表すタグを最大5つまで設定してください。
+- タグの例：「アカウント管理」「アカウント新規申請登録」「スラック」「課題」「作業依頼」など、問い合わせの種類や内容を表すタグ
+- 1つの問い合わせに対して複数のタグを設定できます
+  * 例1：アカウント管理の問い合わせ → ["アカウント管理", "アカウント新規申請登録", null, null, null]
+  * 例2：スラックの問い合わせ → ["スラック", "課題", null, null, null]
+  * 例3：アカウント管理でスラック関連 → ["アカウント管理", "スラック", null, null, null]
+- tags: タグの配列（最大5つ、不足する場合はnullで埋める。必ず5つの要素を持つ配列として返すこと）
 
 【その他】
 - details: 概要・詳細（不明な場合はnull）
@@ -95,9 +99,7 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
         "target_name": "対象者の氏名またはnull",
         "target_email": "メールアドレスまたはnull",
         "target_team": "正規化された所属チーム名またはnull",
-        "category_large": "アカウント管理|作業依頼|課題",
-        "category_medium": "中分類またはnull",
-        "category_small": "小分類またはnull",
+        "tags": ["タグ1", "タグ2", "タグ3", "タグ4", "タグ5"]（最大5つのタグの配列、不足する場合はnullで埋める。例：["アカウント管理", "アカウント新規申請登録", "スラック", null, null]）,
         "details": "概要・詳細またはnull",
         "due_date": "対応期日（YYYY-MM-DD形式）またはnull"
     }}
@@ -150,7 +152,7 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
     Googleスプレッドシートにデータを書き込む
     
     Args:
-        inquirer_name: 問合せ者のUser ID（Slack User ID）
+        inquirer_name: 問合せ者のユーザー名（表示名、実名、またはUser ID）
         extracted_data_list: 抽出された情報のリスト
         original_message: 元のメッセージ
         slack_url: 問合せ元のSlack URL
@@ -199,14 +201,21 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         for idx, extracted_data in enumerate(extracted_data_list):
             inquiry_no = max_inquiry_no + idx + 1
             
+            # タグを取得（配列形式、最大5つ）
+            tags = extracted_data.get("tags", [])
+            # タグを5つに揃える（不足する場合は空文字で埋める）
+            tag_list = [tags[i] if i < len(tags) and tags[i] else "" for i in range(5)]
+            
             row_data = [
                 inquiry_no,  # 問合せNo
                 timestamp,
                 inquirer_name,  # 問合せ者
                 slack_url,  # 問合せ元Slack URL
-                extracted_data.get("category_large", ""),  # 大分類
-                extracted_data.get("category_medium", ""),  # 中分類
-                extracted_data.get("category_small", ""),  # 小分類
+                tag_list[0],  # タグ1
+                tag_list[1],  # タグ2
+                tag_list[2],  # タグ3
+                tag_list[3],  # タグ4
+                tag_list[4],  # タグ5
                 extracted_data.get("target_name", ""),  # 【対象】氏名
                 extracted_data.get("target_email", ""),  # 【対象】Email
                 extracted_data.get("target_team", ""),  # 【対象】所属チーム
@@ -334,10 +343,26 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                 logger.warning(f"文字数超過: {len(text)}文字")
                 return ("OK", 200)
             
-            # 問合せ者の特定（User IDをそのまま使用）
-            # users:read権限なしでも動作するように、User IDをそのまま記録
-            inquirer_name = user_id if user_id else "不明"
-            logger.info(f"問合せ者を特定: User ID {inquirer_name}")
+            # 問合せ者の特定（User IDからユーザー名を取得）
+            inquirer_name = "不明"
+            if user_id:
+                try:
+                    client = WebClient(token=SLACK_BOT_TOKEN)
+                    user_info = client.users_info(user=user_id)
+                    # 表示名を優先、なければ実名、それもなければUser IDを使用
+                    inquirer_name = (
+                        user_info["user"].get("profile", {}).get("display_name") or
+                        user_info["user"].get("real_name") or
+                        user_info["user"].get("name") or
+                        user_id
+                    )
+                    logger.info(f"問合せ者を特定: {inquirer_name} (User ID: {user_id})")
+                except Exception as e:
+                    logger.warning(f"ユーザー情報の取得に失敗したため、User IDを使用: {str(e)}")
+                    inquirer_name = user_id
+                    logger.info(f"問合せ者を特定: User ID {inquirer_name}")
+            else:
+                logger.warning("User IDが取得できませんでした")
             
             # 問合せ元のSlack URLを生成
             # SlackのメッセージURL形式: https://{workspace}.slack.com/archives/{channel}/p{ts}
@@ -345,11 +370,19 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             slack_url = ""
             if channel and thread_ts:
                 ts_for_url = thread_ts.replace(".", "")
-                # workspace名が不明なため、team_idを使用した形式
-                # 実際のURLは https://{workspace}.slack.com/archives/{channel}/p{ts} だが、
-                # workspace名が取得できないため、app.slack.comを使用
-                slack_url = f"https://app.slack.com/client/{team_id}/{channel}/p{ts_for_url}"
-                logger.info(f"Slack URL生成: {slack_url}")
+                # workspace名を取得するためにSlack Web APIを使用
+                try:
+                    client = WebClient(token=SLACK_BOT_TOKEN)
+                    team_info = client.team_info(team=team_id)
+                    workspace_domain = team_info["team"]["domain"]
+                    # 正しいメッセージURL形式: https://{workspace}.slack.com/archives/{channel}/p{ts}
+                    slack_url = f"https://{workspace_domain}.slack.com/archives/{channel}/p{ts_for_url}"
+                    logger.info(f"Slack URL生成: {slack_url}")
+                except Exception as e:
+                    logger.warning(f"workspace名の取得に失敗したため、app.slack.com形式を使用: {str(e)}")
+                    # フォールバック: app.slack.com形式（ブラウザでは開けないが、Slackアプリ内では動作する可能性がある）
+                    slack_url = f"https://app.slack.com/client/{team_id}/{channel}/p{ts_for_url}"
+                    logger.info(f"Slack URL生成（フォールバック）: {slack_url}")
             
             # Geminiで情報抽出
             try:
@@ -361,9 +394,10 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     send_slack_reply(channel, thread_ts, error_message)
                     return ("OK", 200)
                 
-                # バリデーション: 大分類が「アカウント管理」の場合のみ、target_emailが必須
+                # バリデーション: タグに「アカウント管理」が含まれる場合のみ、target_emailが必須
                 for item in extracted_data_list:
-                    if item.get("category_large") == "アカウント管理":
+                    tags = item.get("tags", [])
+                    if isinstance(tags, list) and "アカウント管理" in tags:
                         if not item.get("target_email"):
                             error_message = "アカウント管理の依頼には対象者のメールアドレスが必要です。メールアドレスを含めて再度入力してください"
                             send_slack_reply(channel, thread_ts, error_message)
@@ -394,11 +428,11 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     
                     if min_row == max_row:
                         # 1行のみの場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:M{min_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{min_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}>")
                     else:
                         # 複数行の場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:M{max_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{max_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}-{max_inquiry_no}>")
                 
                 # 成功メッセージを作成
@@ -422,13 +456,13 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                         success_message += f"所属チーム: {item.get('target_team')}\n"
                     if item.get("due_date"):
                         success_message += f"対応期日: {item.get('due_date')}\n"
-                    if item.get("category_large"):
-                        success_message += f"分類: {item.get('category_large')}"
-                        if item.get("category_medium"):
-                            success_message += f" > {item.get('category_medium')}"
-                        if item.get("category_small"):
-                            success_message += f" > {item.get('category_small')}"
-                        success_message += "\n"
+                    # タグを表示
+                    tags = item.get("tags", [])
+                    if isinstance(tags, list) and tags:
+                        # nullや空文字を除外してタグを表示
+                        valid_tags = [tag for tag in tags if tag and tag != "null"]
+                        if valid_tags:
+                            success_message += f"タグ: {', '.join(valid_tags)}\n"
                 
                 send_slack_reply(channel, thread_ts, success_message)
                 
