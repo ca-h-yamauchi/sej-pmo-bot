@@ -12,18 +12,22 @@
 以下のコマンドを実行して、GitHubリポジトリにプッシュします：
 
 ```bash
-# リモートリポジトリを追加（YOUR_USERNAMEを実際のGitHubユーザー名に置き換えてください）
-git remote add origin https://github.com/YOUR_USERNAME/sej-pmo-bot.git
+# リモートリポジトリを追加
+git remote add origin https://github.com/ca-h-yamauchi/sej-pmo-bot.git
 
 # またはSSHを使用する場合
-git remote add origin git@github.com:YOUR_USERNAME/sej-pmo-bot.git
+git remote add origin git@github.com:ca-h-yamauchi/sej-pmo-bot.git
 
 # ブランチ名をmainに変更（GitHubのデフォルトに合わせる）
 git branch -M main
 
-# GitHubにプッシュ
+# GitHubにプッシュ（認証が必要な場合はPersonal Access Tokenを使用）
 git push -u origin main
 ```
+
+**リポジトリURL**: https://github.com/ca-h-yamauchi/sej-pmo-bot.git
+
+**注意**: GitHubへのプッシュには認証が必要です。Personal Access Token (PAT) を使用する場合は、パスワードの代わりにPATを入力してください。
 
 ## 3. 今後の更新手順
 

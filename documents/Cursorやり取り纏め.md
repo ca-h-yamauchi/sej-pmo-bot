@@ -592,3 +592,62 @@ gspread.exceptions.APIError: APIError: [403]: The caller does not have permissio
 **技術的な変更点**:
 - **文字数制限**: 500文字以内のチェックを追加（コスト削減のため）
 - **返信文面の改善**: 確認を促すメッセージに変更（ユーザビリティ向上）
+
+---
+
+## GitHubリポジトリ追加（2025年1月）
+
+### やり取り内容
+
+**ユーザーリクエスト**: GitHubに本プロジェクトのリポジトリを追加して、保存しておきたい
+
+**実施した作業**:
+1. `.gitignore`ファイルの確認と更新
+   - `env_sej_pmo_bot/`仮想環境ディレクトリを除外対象に追加
+   - 既存の除外設定（`.env`、`cloud_run_files/cloud_run.yaml`など）を確認
+
+2. Gitリポジトリの初期化
+   - `git init`でローカルリポジトリを初期化
+
+3. 初回コミットの作成
+   - プロジェクトファイルをステージング（`git add .`）
+   - 初回コミット: "Initial commit: SEJ PMO Bot project"
+   - コミット内容:
+     - `.gitignore`
+     - `main.py`
+     - `requirements.txt`
+     - `test_local.py`
+     - `env.example`
+     - `cloud_run_files/`配下のファイル
+     - `documents/`配下のドキュメントファイル
+
+4. GitHubデプロイ手順ドキュメントの作成
+   - `documents/GitHubデプロイ手順.md`を作成
+   - リポジトリ作成手順、リモート追加、プッシュ手順を記載
+   - コミット: "Add GitHub deployment instructions"
+
+5. GitHubリモートリポジトリの追加とプッシュ
+   - リモートURL: `https://github.com/ca-h-yamauchi/sej-pmo-bot.git`
+   - ブランチ名を`main`に変更
+   - GitHubへのプッシュを実行（ユーザーが認証を完了）
+
+**このセッションで追加・更新されたファイル**:
+- `.gitignore`: `env_sej_pmo_bot/`を除外対象に追加
+- `documents/GitHubデプロイ手順.md`: 新規作成（GitHubデプロイ手順を記載）
+
+**技術的な変更点**:
+- **Gitリポジトリの初期化**: プロジェクトをGitでバージョン管理開始
+- **GitHub連携**: リモートリポジトリを追加し、コードをGitHubで管理
+- **ブランチ管理**: `main`ブランチを使用（GitHubのデフォルトに合わせる）
+
+**リポジトリ情報**:
+- **GitHubリポジトリ**: https://github.com/ca-h-yamauchi/sej-pmo-bot
+- **ブランチ**: `main`
+- **リモート名**: `origin`
+
+**今後の更新手順**:
+```bash
+git add .
+git commit -m "変更内容の説明"
+git push
+```
