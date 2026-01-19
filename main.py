@@ -6,7 +6,8 @@ import os
 import json
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime
+from datetime import datetime, timedelta
+from calendar import monthrange
 
 import re
 import functions_framework
@@ -32,6 +33,93 @@ LOCATION = os.environ.get("LOCATION", "asia-northeast1")
 
 # 署名検証用のインスタンス
 signature_verifier = SignatureVerifier(SLACK_SIGNING_SECRET) if SLACK_SIGNING_SECRET else None
+
+
+def normalize_due_date(due_date_str: Optional[str]) -> Optional[str]:
+    """
+    期日文字列を正規化する（相対的な日付表現を実際の日付に変換）
+    
+    Args:
+        due_date_str: 期日文字列（例：「１月中」「来月まで」「今月末」など）
+        
+    Returns:
+        正規化された日付文字列（YYYY-MM-DD形式）、変換できない場合は元の文字列を返す
+    """
+    if not due_date_str or due_date_str.lower() in ["null", "none", ""]:
+        return None
+    
+    # 既にYYYY-MM-DD形式の場合はそのまま返す
+    if re.match(r'^\d{4}-\d{2}-\d{2}$', due_date_str):
+        return due_date_str
+    
+    now = datetime.now()
+    current_year = now.year
+    current_month = now.month
+    
+    # 「○月中」「○月末」のパターン（数字は全角・半角両対応）
+    month_pattern = r'([０-９0-9]+)月(中|末|まで)'
+    match = re.search(month_pattern, due_date_str)
+    if match:
+        month_str = match.group(1)
+        # 全角数字を半角に変換
+        month_str = month_str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        try:
+            month = int(month_str)
+            if 1 <= month <= 12:
+                if match.group(2) == "末":
+                    # その月の最終日
+                    _, last_day = monthrange(current_year, month)
+                    return f"{current_year}-{month:02d}-{last_day:02d}"
+                elif match.group(2) in ["中", "まで"]:
+                    # その月の最終日（「中」は月末までという意味として解釈）
+                    _, last_day = monthrange(current_year, month)
+                    return f"{current_year}-{month:02d}-{last_day:02d}"
+        except ValueError:
+            pass
+    
+    # 「今月末」「今月中」のパターン
+    if re.search(r'今月(末|中|まで)', due_date_str):
+        _, last_day = monthrange(current_year, current_month)
+        return f"{current_year}-{current_month:02d}-{last_day:02d}"
+    
+    # 「来月」「来月末」「来月中」のパターン
+    if re.search(r'来月(末|中|まで)?', due_date_str):
+        next_month = current_month + 1
+        next_year = current_year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        _, last_day = monthrange(next_year, next_month)
+        return f"{next_year}-{next_month:02d}-{last_day:02d}"
+    
+    # 「来週」「来週末」のパターン
+    if re.search(r'来週(末|まで)?', due_date_str):
+        days_until_next_week = 7 - now.weekday()  # 次の月曜日までの日数
+        next_week_date = now + timedelta(days=days_until_next_week + 6)  # 次の日曜日
+        return next_week_date.strftime("%Y-%m-%d")
+    
+    # 「今週末」「今週まで」のパターン
+    if re.search(r'今週(末|まで)', due_date_str):
+        days_until_sunday = 6 - now.weekday()  # 今週の日曜日までの日数
+        this_weekend = now + timedelta(days=days_until_sunday)
+        return this_weekend.strftime("%Y-%m-%d")
+    
+    # 「○日後」「○日以内」のパターン
+    days_pattern = r'([０-９0-9]+)日(後|以内|まで)'
+    match = re.search(days_pattern, due_date_str)
+    if match:
+        days_str = match.group(1)
+        days_str = days_str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        try:
+            days = int(days_str)
+            target_date = now + timedelta(days=days)
+            return target_date.strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+    
+    # 変換できない場合は元の文字列を返す（Geminiが既に正しい形式で返している可能性がある）
+    logger.warning(f"期日の正規化に失敗: {due_date_str}")
+    return due_date_str
 
 
 def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, Any]]:
@@ -73,23 +161,22 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 【対象者情報】
 - target_name: 対象者の氏名（「私」の場合はメッセージ本文から抽出。「{inquirer_name}」を指す可能性が高い）
 - target_email: 対象者のメールアドレス（不明な場合はnull）
-- target_team: 対象者の所属チーム。以下のリストから最も適切なものを選択し、正規化して出力すること。
-  * 正規化リスト: 「アプリチーム」「SREチーム」「運用保守チーム」「Lookerチーム」「営業担当」「コンサルティング部」
-  * ※「インフラチーム」→「SREチーム」のように類推すること。
-  * （不明な場合はnull）
 
 【タグ情報】
 この問い合わせの属性を表すタグを最大5つまで設定してください。
 - タグの例：「アカウント管理」「アカウント新規申請登録」「スラック」「課題」「作業依頼」など、問い合わせの種類や内容を表すタグ
 - 1つの問い合わせに対して複数のタグを設定できます
   * 例1：アカウント管理の問い合わせ → ["アカウント管理", "アカウント新規申請登録", null, null, null]
-  * 例2：スラックの問い合わせ → ["スラック", "課題", null, null, null]
-  * 例3：アカウント管理でスラック関連 → ["アカウント管理", "スラック", null, null, null]
+  * 例2：Slackに関する改善したい事項の問い合わせ → ["課題", "Slack", null, null, null]
+  * 例3：アカウント管理でSlack関連、権限の追加に関する問い合わせ → ["アカウント管理", "権限追加", "Slack", null, null]
+- 重要：問い合わせ内に所属を表す情報（例：「営業のAさん」「SREチームのBさん」「コンサルティング部のCさん」など）が明示的に含まれている場合は、その所属情報もタグに含めてください。
+  * 例：「営業のAさんのAsanaアカウント追加」→ ["アカウント管理", "新規登録", "Asana", "営業", null]
+  * 例：「SREチームのBさんのSlackアカウント作成」→ ["アカウント管理", "新規登録", "スラック", "SREチーム", null]
 - tags: タグの配列（最大5つ、不足する場合はnullで埋める。必ず5つの要素を持つ配列として返すこと）
 
 【その他】
 - details: 概要・詳細（不明な場合はnull）
-- due_date: 対応期日（作業して欲しい期日が明示されている場合のみ記載。YYYY-MM-DD形式、不明な場合はnull）
+- due_date: 対応期日（作業して欲しい期日が明示されている場合のみ記載。明示的な日付（例：「2024-01-31」）の場合はYYYY-MM-DD形式で返す。相対的な表現（例：「１月中」「来月末」「今週末」など）の場合は、そのままの表現で返すこと。不明な場合はnull）
 
 テキスト: {text}
 
@@ -98,10 +185,9 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
     {{
         "target_name": "対象者の氏名またはnull",
         "target_email": "メールアドレスまたはnull",
-        "target_team": "正規化された所属チーム名またはnull",
         "tags": ["タグ1", "タグ2", "タグ3", "タグ4", "タグ5"]（最大5つのタグの配列、不足する場合はnullで埋める。例：["アカウント管理", "アカウント新規申請登録", "スラック", null, null]）,
         "details": "概要・詳細またはnull",
-        "due_date": "対応期日（YYYY-MM-DD形式）またはnull"
+        "due_date": "対応期日（明示的な日付の場合はYYYY-MM-DD形式、相対的な表現の場合はそのままの表現、不明な場合はnull）"
     }}
 ]
 """
@@ -134,6 +220,14 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
         # リストでない場合はリストに変換（後方互換性）
         if not isinstance(extracted_data_list, list):
             extracted_data_list = [extracted_data_list]
+        
+        # 期日を正規化
+        for item in extracted_data_list:
+            if "due_date" in item and item["due_date"]:
+                normalized_date = normalize_due_date(item["due_date"])
+                if normalized_date != item["due_date"]:
+                    logger.info(f"期日を正規化: {item['due_date']} → {normalized_date}")
+                item["due_date"] = normalized_date
         
         logger.info(f"抽出されたデータ（{len(extracted_data_list)}件）: {extracted_data_list}")
         return extracted_data_list
@@ -218,7 +312,6 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                 tag_list[4],  # タグ5
                 extracted_data.get("target_name", ""),  # 【対象】氏名
                 extracted_data.get("target_email", ""),  # 【対象】Email
-                extracted_data.get("target_team", ""),  # 【対象】所属チーム
                 extracted_data.get("due_date", ""),  # 対応期日
                 extracted_data.get("details", ""),  # 概要・詳細
                 original_message  # 元のメッセージ
@@ -336,9 +429,9 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             
             logger.info(f"メンションを受信: {text}")
             
-            # 文字数チェック（500文字以内のみ受け付け）
-            if len(text) > 500:
-                error_message = f"お問合せの内容が長すぎます（{len(text)}文字）。500文字以内で再度入力してください。"
+            # 文字数チェック（1000文字以内のみ受け付け）
+            if len(text) > 1000:
+                error_message = f"お問合せの内容が長すぎます（{len(text)}文字）。1000文字以内で再度入力してください。"
                 send_slack_reply(channel, thread_ts, error_message)
                 logger.warning(f"文字数超過: {len(text)}文字")
                 return ("OK", 200)
@@ -428,11 +521,11 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     
                     if min_row == max_row:
                         # 1行のみの場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{min_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:N{min_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}>")
                     else:
                         # 複数行の場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{max_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:N{max_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}-{max_inquiry_no}>")
                 
                 # 成功メッセージを作成
@@ -452,8 +545,6 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                         success_message += f"対象者: {item.get('target_name')}\n"
                     if item.get("target_email"):
                         success_message += f"メールアドレス: {item.get('target_email')}\n"
-                    if item.get("target_team"):
-                        success_message += f"所属チーム: {item.get('target_team')}\n"
                     if item.get("due_date"):
                         success_message += f"対応期日: {item.get('due_date')}\n"
                     # タグを表示
