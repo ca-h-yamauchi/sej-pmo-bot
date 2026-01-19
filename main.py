@@ -166,7 +166,7 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 この問い合わせの属性を表すタグを最大5つまで設定してください。
 - タグの例：「アカウント管理」「アカウント新規申請登録」「スラック」「課題」「作業依頼」など、問い合わせの種類や内容を表すタグ
 - 1つの問い合わせに対して複数のタグを設定できます
-  * 例1：アカウント管理の問い合わせ → ["アカウント管理", "アカウント新規申請登録", null, null, null]
+  * 例1：（社内ツールである）RMS登録の作業依頼 → ["作業依頼", "RMS登録", null, null, null]
   * 例2：Slackに関する改善したい事項の問い合わせ → ["課題", "Slack", null, null, null]
   * 例3：アカウント管理でSlack関連、権限の追加に関する問い合わせ → ["アカウント管理", "権限追加", "Slack", null, null]
 - 重要：問い合わせ内に所属を表す情報（例：「営業のAさん」「SREチームのBさん」「コンサルティング部のCさん」など）が明示的に含まれている場合は、その所属情報もタグに含めてください。
@@ -178,6 +178,13 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 - details: 概要・詳細（不明な場合はnull）
 - due_date: 対応期日（作業して欲しい期日が明示されている場合のみ記載。明示的な日付（例：「2024-01-31」）の場合はYYYY-MM-DD形式で返す。相対的な表現（例：「１月中」「来月末」「今週末」など）の場合は、そのままの表現で返すこと。不明な場合はnull）
 
+【オーダ情報】
+- order_number: オーダ番号（以下のいずれかのパターンに該当する場合のみ抽出）
+  * パターン1: 990000～999999の数字のみの6桁（例：990015）
+  * パターン2: 数字2桁+JP+数字6桁（例：24JP021670、25JP022318）
+  * 該当しない場合はnull
+- order_name: オーダ名（オーダ番号の後に続くテキスト。例：「SEJ_本対応_Google Cloud / Java バージョンアップ対応」「クラウドエース株式会社：定例会議（案件外）」など。オーダ番号がない場合はnull）
+
 テキスト: {text}
 
 必ず以下のJSON配列形式で返答してください（複数の依頼がある場合は配列に複数の要素を含める）:
@@ -187,7 +194,9 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
         "target_email": "メールアドレスまたはnull",
         "tags": ["タグ1", "タグ2", "タグ3", "タグ4", "タグ5"]（最大5つのタグの配列、不足する場合はnullで埋める。例：["アカウント管理", "アカウント新規申請登録", "スラック", null, null]）,
         "details": "概要・詳細またはnull",
-        "due_date": "対応期日（明示的な日付の場合はYYYY-MM-DD形式、相対的な表現の場合はそのままの表現、不明な場合はnull）"
+        "due_date": "対応期日（明示的な日付の場合はYYYY-MM-DD形式、相対的な表現の場合はそのままの表現、不明な場合はnull）",
+        "order_number": "オーダ番号（[990000～999999の数字6桁]または[数字2桁+JP+数字6桁]の形式、該当しない場合はnull）",
+        "order_name": "オーダ名（オーダ番号の後に続くテキスト、オーダ番号がない場合はnull）"
     }}
 ]
 """
@@ -241,14 +250,13 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 
 
 def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str, Any]], 
-                        original_message: str, slack_url: str) -> tuple[bool, List[int]]:
+                        slack_url: str) -> tuple[bool, List[int]]:
     """
     Googleスプレッドシートにデータを書き込む
     
     Args:
         inquirer_name: 問合せ者のユーザー名（表示名、実名、またはUser ID）
         extracted_data_list: 抽出された情報のリスト
-        original_message: 元のメッセージ
         slack_url: 問合せ元のSlack URL
         
     Returns:
@@ -266,16 +274,16 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         logger.info(f"スプレッドシートを開く: KEY={SPREADSHEET_KEY}")
         spreadsheet = gc.open_by_key(SPREADSHEET_KEY)
         logger.info(f"スプレッドシートを開くことに成功: {spreadsheet.title}")
-        worksheet = spreadsheet.sheet1
+        worksheet = spreadsheet.worksheet("問合せリスト")
         logger.info(f"ワークシートを取得: {worksheet.title}")
         
         # 問合せNoを取得（既存の最大値+1）
-        # 1行目はヘッダーのため、2行目以降を確認
+        # 1-2行目はヘッダーのため、3行目以降を確認
         existing_rows = worksheet.get_all_values()
         max_inquiry_no = 0
-        if len(existing_rows) > 1:
+        if len(existing_rows) > 2:
             # 1列目（問合せNo）の最大値を取得
-            for row in existing_rows[1:]:  # ヘッダーをスキップ
+            for row in existing_rows[2:]:  # ヘッダー（1-2行目）をスキップ
                 if row and row[0]:  # 1列目が存在する場合
                     try:
                         # 数値として解釈できるか確認
@@ -288,10 +296,14 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         # タイムスタンプを取得
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
+        # 書き込むべき開始行を計算（3行目以降、既存データがある場合は最後の行の次）
+        start_row = max(3, len(existing_rows) + 1)
+        
         # 書き込んだ行番号を記録
         written_row_numbers = []
         
-        # リストの各要素を行として追加
+        # すべての行データを準備
+        all_row_data = []
         for idx, extracted_data in enumerate(extracted_data_list):
             inquiry_no = max_inquiry_no + idx + 1
             
@@ -314,14 +326,19 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                 extracted_data.get("target_email", ""),  # 【対象】Email
                 extracted_data.get("due_date", ""),  # 対応期日
                 extracted_data.get("details", ""),  # 概要・詳細
-                original_message  # 元のメッセージ
+                extracted_data.get("order_number", ""),  # オーダ番号
+                extracted_data.get("order_name", "")  # オーダ名
             ]
-            
-            worksheet.append_row(row_data)
-            # 書き込んだ行番号を取得（現在の行数）
-            written_row = len(existing_rows) + len(written_row_numbers) + 1
-            written_row_numbers.append(written_row)
-            logger.info(f"スプレッドシートに書き込み成功: 問合せNo={inquiry_no}, 行={written_row}, {row_data}")
+            all_row_data.append(row_data)
+            written_row_numbers.append(start_row + idx)
+        
+        # 3行目以降に一度に書き込む
+        if all_row_data:
+            range_name = f"A{start_row}:O{start_row + len(all_row_data) - 1}"
+            worksheet.update(range_name, all_row_data, value_input_option='RAW')
+            logger.info(f"スプレッドシートに書き込み成功: {len(all_row_data)}行を{start_row}行目から書き込み")
+            for idx, row_data in enumerate(all_row_data):
+                logger.info(f"  問合せNo={row_data[0]}, 行={start_row + idx}")
         
         # 書き込んだ問合せNoのリストも返す
         written_inquiry_nos = []
@@ -497,15 +514,15 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                             return ("OK", 200)
                 
                 # スプレッドシートに書き込み（複数件対応）
-                success, written_row_numbers, written_inquiry_nos = write_to_spreadsheet(inquirer_name, extracted_data_list, text, slack_url)
+                success, written_row_numbers, written_inquiry_nos = write_to_spreadsheet(inquirer_name, extracted_data_list, slack_url)
                 
                 # スプレッドシートの範囲リンクを生成
-                # gidを取得（sheet1のgidは通常0だが、確認する）
+                # gidを取得
                 try:
                     credentials, _ = default()
                     gc = gspread.authorize(credentials)
                     spreadsheet = gc.open_by_key(SPREADSHEET_KEY)
-                    worksheet = spreadsheet.sheet1
+                    worksheet = spreadsheet.worksheet("問合せリスト")
                     gid = worksheet.id  # gspreadのidプロパティでgidを取得
                 except:
                     gid = 0  # デフォルト値
@@ -521,15 +538,16 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     
                     if min_row == max_row:
                         # 1行のみの場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:N{min_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{min_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}>")
                     else:
                         # 複数行の場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:N{max_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{max_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}-{max_inquiry_no}>")
                 
-                # 成功メッセージを作成
-                success_message = f"お問合せ頂いた内容について、以下の通りスプレッドシートに{len(extracted_data_list)}件登録しました。認識相違が無いかご確認ください。\n"
+                # 成功メッセージを作成（問合せ者へのメンションを追加）
+                mention_text = f"<@{user_id}> " if user_id else ""
+                success_message = f"{mention_text}お問合せ頂いた内容について、以下の通りスプレッドシートに{len(extracted_data_list)}件登録しました。認識相違が無いかご確認ください。\n"
                 
                 # スプレッドシートリンクを追加
                 if sheet_links:
