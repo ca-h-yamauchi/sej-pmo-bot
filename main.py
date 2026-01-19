@@ -6,7 +6,7 @@ import os
 import json
 import logging
 from typing import Dict, Any, Optional, List
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from calendar import monthrange
 
 import re
@@ -52,7 +52,9 @@ def normalize_due_date(due_date_str: Optional[str]) -> Optional[str]:
     if re.match(r'^\d{4}-\d{2}-\d{2}$', due_date_str):
         return due_date_str
     
-    now = datetime.now()
+    # 日本時間で現在時刻を取得
+    jst = timezone(timedelta(hours=9))
+    now = datetime.now(jst)
     current_year = now.year
     current_month = now.month
     
@@ -293,8 +295,9 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                     except (ValueError, IndexError):
                         continue
         
-        # タイムスタンプを取得
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # タイムスタンプを取得（日本時間）
+        jst = timezone(timedelta(hours=9))
+        timestamp = datetime.now(jst).strftime("%Y-%m-%d %H:%M:%S")
         
         # 書き込むべき開始行を計算（3行目以降、既存データがある場合は最後の行の次）
         start_row = max(3, len(existing_rows) + 1)
@@ -316,6 +319,7 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                 inquiry_no,  # 問合せNo
                 timestamp,
                 inquirer_name,  # 問合せ者
+                extracted_data.get("details", ""),  # 概要・詳細
                 slack_url,  # 問合せ元Slack URL
                 tag_list[0],  # タグ1
                 tag_list[1],  # タグ2
@@ -325,7 +329,6 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                 extracted_data.get("target_name", ""),  # 【対象】氏名
                 extracted_data.get("target_email", ""),  # 【対象】Email
                 extracted_data.get("due_date", ""),  # 対応期日
-                extracted_data.get("details", ""),  # 概要・詳細
                 extracted_data.get("order_number", ""),  # オーダ番号
                 extracted_data.get("order_name", "")  # オーダ名
             ]
