@@ -124,6 +124,19 @@ def normalize_due_date(due_date_str: Optional[str]) -> Optional[str]:
     return due_date_str
 
 
+def normalize_slack_mailto_links(text: str) -> str:
+    """
+    Slack API が返すメールの自動リンク表記を平文に戻す。
+    例: <mailto:user@example.com|user@example.com> → user@example.com
+    """
+    return re.sub(
+        r"<mailto:([^|>]+)(?:\|[^>]*)?>",
+        lambda m: m.group(1).strip(),
+        text,
+        flags=re.IGNORECASE,
+    )
+
+
 def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, Any]]:
     """
     Vertex AI (Gemini 2.5 Flash Lite) を使用してテキストから情報を抽出する
@@ -163,6 +176,9 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
 【対象者情報】
 - target_name: 対象者の氏名（「私」の場合はメッセージ本文から抽出。「{inquirer_name}」を指す可能性が高い）
 - target_email: 対象者のメールアドレス（不明な場合はnull）
+  * 本文は通常の「local@domain」形式で渡されますが、もし角括弧や記号が残っていても中身のメールアドレスだけを抽出してください。
+  * 「氏名」「メール」「Email」「アドレス」などのラベルの直後や、同じ行・隣接する行に書かれたメール形式の文字列は、文脈から対象者のものであれば必ず target_email に設定してください（見落とさないこと）。
+  * アカウント管理・新規申請・権限などの依頼で、本文に1件でも有効なメールアドレスがあれば、それを対象者のメールとして返してください。依頼者（問い合わせ者）用と明示されていない限り、依頼の対象となる人物のメールとして扱ってください。
 
 【タグ情報】
 この問い合わせの属性を表すタグを最大5つまで設定してください。
@@ -330,14 +346,15 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
                 extracted_data.get("target_email", ""),  # 【対象】Email
                 extracted_data.get("due_date", ""),  # 対応期日
                 extracted_data.get("order_number", ""),  # オーダ番号
-                extracted_data.get("order_name", "")  # オーダ名
+                extracted_data.get("order_name", ""),  # オーダ名
+                "1.未着手",  # P列: 進捗ステータス（初動）
             ]
             all_row_data.append(row_data)
             written_row_numbers.append(start_row + idx)
         
         # 3行目以降に一度に書き込む
         if all_row_data:
-            range_name = f"A{start_row}:O{start_row + len(all_row_data) - 1}"
+            range_name = f"A{start_row}:P{start_row + len(all_row_data) - 1}"
             worksheet.update(range_name, all_row_data, value_input_option='RAW')
             logger.info(f"スプレッドシートに書き込み成功: {len(all_row_data)}行を{start_row}行目から書き込み")
             for idx, row_data in enumerate(all_row_data):
@@ -446,7 +463,8 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             
             # ボットへのメンション部分を除去（例: "<@U123456> " を除去）
             text = re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
-            
+            text = normalize_slack_mailto_links(text)
+
             logger.info(f"メンションを受信: {text}")
             
             # 文字数チェック（1000文字以内のみ受け付け）
@@ -541,11 +559,11 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     
                     if min_row == max_row:
                         # 1行のみの場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{min_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:P{min_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}>")
                     else:
                         # 複数行の場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:O{max_row}"
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:P{max_row}"
                         sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}-{max_inquiry_no}>")
                 
                 # 成功メッセージを作成（問合せ者へのメンションを追加）
