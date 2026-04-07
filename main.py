@@ -137,13 +137,14 @@ def normalize_slack_mailto_links(text: str) -> str:
     )
 
 
-def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, Any]]:
+def extract_info_with_gemini(text: str, inquirer_name: str, is_issue: bool = False) -> List[Dict[str, Any]]:
     """
     Vertex AI (Gemini 2.5 Flash Lite) を使用してテキストから情報を抽出する
     
     Args:
         text: 抽出対象のテキスト
         inquirer_name: 問合せ者のユーザー名（表示名、実名、またはUser ID）
+        is_issue: 課題管理モードの場合True（課題管理用プロンプトを使用）
         
     Returns:
         抽出された情報の辞書のリスト（複数依頼に対応）
@@ -161,7 +162,38 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
         logger.info(f"使用するモデル: {model_name} (リージョン: {LOCATION})")
         model = GenerativeModel(model_name)
         
-        prompt = f"""
+        if is_issue:
+            prompt = f"""
+以下のテキストから、課題・問題事項に関する情報を抽出してください。
+
+【コンテキスト情報】
+この報告は「{inquirer_name}」からのものです。
+
+【抽出・分類ルール】
+1. 1つのメッセージに複数の課題がある場合は、それぞれを別のエントリとして分割してください。
+2. 各エントリについて以下の情報を抽出してください：
+
+- issue_title: 課題タイトル（メッセージ内容から核心を20文字以内で端的に要約）
+- issue_summary: 課題の概要（状況・影響・背景などを含む詳細なサマリー）
+- tags: 対象システム名やバグ/仕様/運用などのカテゴリを表すタグの配列（例：["Slack", "バグ", "アカウント管理"]）
+- priority: 優先度（メッセージから推測できる場合は High / Mid / Low のいずれか。不明な場合はnull）
+- due_date: 目標解決日（明示的な日付の場合はYYYY-MM-DD形式で返す。相対的な表現（例：「１月中」「来月末」「今週末」など）の場合は、そのままの表現で返すこと。不明な場合はnull）
+
+テキスト: {text}
+
+必ず以下のJSON配列形式で返答してください（複数の課題がある場合は配列に複数の要素を含める）:
+[
+    {{
+        "issue_title": "課題タイトル（20文字以内）",
+        "issue_summary": "課題の概要（詳細なサマリー）",
+        "tags": ["タグ1", "タグ2"],
+        "priority": "High/Mid/Lowまたはnull",
+        "due_date": "目標解決日（明示的な日付の場合はYYYY-MM-DD形式、相対的な表現の場合はそのままの表現、不明な場合はnull）"
+    }}
+]
+"""
+        else:
+            prompt = f"""
 以下のテキストから、アカウント申請や作業依頼に関する情報を抽出してください。
 
 【コンテキスト情報】
@@ -267,8 +299,30 @@ def extract_info_with_gemini(text: str, inquirer_name: str) -> List[Dict[str, An
         raise
 
 
+def _datetime_to_sheets_serial(dt: datetime) -> float:
+    """
+    datetimeをGoogleスプレッドシートのシリアル値（浮動小数点数）に変換する。
+    スプレッドシートのエポックは1899-12-30。タイムゾーン情報は除去してローカル時刻として扱う。
+    """
+    epoch = datetime(1899, 12, 30)
+    return (dt.replace(tzinfo=None) - epoch).total_seconds() / 86400
+
+
+def _date_str_to_sheets_serial(date_str: str) -> Optional[int]:
+    """
+    YYYY-MM-DD形式の日付文字列をGoogleスプレッドシートのシリアル値（整数）に変換する。
+    パースできない場合はNoneを返す。
+    """
+    try:
+        from datetime import date as _date
+        d = datetime.strptime(date_str, "%Y-%m-%d").date()
+        return (_date(d.year, d.month, d.day) - _date(1899, 12, 30)).days
+    except (ValueError, TypeError):
+        return None
+
+
 def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str, Any]], 
-                        slack_url: str) -> tuple[bool, List[int]]:
+                        slack_url: str, is_issue: bool = False) -> tuple[bool, List[int], List[int]]:
     """
     Googleスプレッドシートにデータを書き込む
     
@@ -276,13 +330,14 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         inquirer_name: 問合せ者のユーザー名（表示名、実名、またはUser ID）
         extracted_data_list: 抽出された情報のリスト
         slack_url: 問合せ元のSlack URL
+        is_issue: 課題管理モードの場合True（"課題管理"シートへA〜L列で書き込む）
         
     Returns:
         (書き込み成功時True, 書き込んだ行番号のリスト, 書き込んだ問合せNoのリスト)
     """
     try:
         # ADC (Application Default Credentials) を使用
-        logger.info(f"スプレッドシートへの書き込み開始: SPREADSHEET_KEY={SPREADSHEET_KEY}")
+        logger.info(f"スプレッドシートへの書き込み開始: SPREADSHEET_KEY={SPREADSHEET_KEY}, is_issue={is_issue}")
         credentials, _ = default()
         logger.info("認証情報の取得に成功")
         gc = gspread.authorize(credentials)
@@ -292,7 +347,8 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         logger.info(f"スプレッドシートを開く: KEY={SPREADSHEET_KEY}")
         spreadsheet = gc.open_by_key(SPREADSHEET_KEY)
         logger.info(f"スプレッドシートを開くことに成功: {spreadsheet.title}")
-        worksheet = spreadsheet.worksheet("問合せリスト")
+        sheet_name = "課題管理" if is_issue else "問合せリスト"
+        worksheet = spreadsheet.worksheet(sheet_name)
         logger.info(f"ワークシートを取得: {worksheet.title}")
         
         # 問合せNoを取得（既存の最大値+1）
@@ -326,45 +382,66 @@ def write_to_spreadsheet(inquirer_name: str, extracted_data_list: List[Dict[str,
         for idx, extracted_data in enumerate(extracted_data_list):
             inquiry_no = max_inquiry_no + idx + 1
             
-            # タグを取得（配列形式、最大5つ）
-            tags = extracted_data.get("tags", [])
-            # タグを5つに揃える（不足する場合は空文字で埋める）
-            tag_list = [tags[i] if i < len(tags) and tags[i] else "" for i in range(5)]
-            
-            row_data = [
-                inquiry_no,  # 問合せNo
-                timestamp,
-                inquirer_name,  # 問合せ者
-                extracted_data.get("details", ""),  # 概要・詳細
-                slack_url,  # 問合せ元Slack URL
-                tag_list[0],  # タグ1
-                tag_list[1],  # タグ2
-                tag_list[2],  # タグ3
-                tag_list[3],  # タグ4
-                tag_list[4],  # タグ5
-                extracted_data.get("target_name", ""),  # 【対象】氏名
-                extracted_data.get("target_email", ""),  # 【対象】Email
-                extracted_data.get("due_date", ""),  # 対応期日
-                extracted_data.get("order_number", ""),  # オーダ番号
-                extracted_data.get("order_name", ""),  # オーダ名
-                "1.未着手",  # P列: 進捗ステータス（初動）
-            ]
+            if is_issue:
+                # 課題管理用: A〜L列の12列構成
+                raw_tags = extracted_data.get("tags", []) or []
+                tags_str = ", ".join(t for t in raw_tags if t and t != "null")
+                due_date_raw = extracted_data.get("due_date", "") or ""
+                # 目標解決日: YYYY-MM-DD形式の場合はシリアル値、それ以外は文字列のまま
+                due_date_serial = _date_str_to_sheets_serial(due_date_raw)
+                due_date_value = due_date_serial if due_date_serial is not None else (
+                    due_date_raw if due_date_raw not in ("null", "None", "") else ""
+                )
+                row_data = [
+                    inquiry_no,                                          # A: 課題No
+                    _datetime_to_sheets_serial(datetime.now(jst)),       # B: 起票日時（シリアル値）
+                    inquirer_name,                                       # C: 起票者
+                    slack_url,                                           # D: Slack URL
+                    extracted_data.get("issue_title", ""),               # E: 課題タイトル
+                    extracted_data.get("issue_summary", ""),             # F: 課題概要
+                    tags_str,                                            # G: カテゴリ/タグ
+                    extracted_data.get("priority", "") or "",            # H: 優先度
+                    "",                                                  # I: 担当者（空）
+                    due_date_value,                                      # J: 目標解決日（シリアル値または文字列）
+                    "1.未着手",                                          # K: ステータス
+                    "",                                                  # L: 最新状況メモ（空）
+                ]
+            else:
+                # 問合せ管理用: A〜P列の16列構成（既存ロジック）
+                tags = extracted_data.get("tags", [])
+                tag_list = [tags[i] if i < len(tags) and tags[i] else "" for i in range(5)]
+                row_data = [
+                    inquiry_no,  # 問合せNo
+                    timestamp,
+                    inquirer_name,  # 問合せ者
+                    extracted_data.get("details", ""),  # 概要・詳細
+                    slack_url,  # 問合せ元Slack URL
+                    tag_list[0],  # タグ1
+                    tag_list[1],  # タグ2
+                    tag_list[2],  # タグ3
+                    tag_list[3],  # タグ4
+                    tag_list[4],  # タグ5
+                    extracted_data.get("target_name", ""),  # 【対象】氏名
+                    extracted_data.get("target_email", ""),  # 【対象】Email
+                    extracted_data.get("due_date", ""),  # 対応期日
+                    extracted_data.get("order_number", ""),  # オーダ番号
+                    extracted_data.get("order_name", ""),  # オーダ名
+                    "1.未着手",  # P列: 進捗ステータス（初動）
+                ]
             all_row_data.append(row_data)
             written_row_numbers.append(start_row + idx)
         
         # 3行目以降に一度に書き込む
         if all_row_data:
-            range_name = f"A{start_row}:P{start_row + len(all_row_data) - 1}"
+            last_col = "L" if is_issue else "P"
+            range_name = f"A{start_row}:{last_col}{start_row + len(all_row_data) - 1}"
             worksheet.update(range_name, all_row_data, value_input_option='RAW')
-            logger.info(f"スプレッドシートに書き込み成功: {len(all_row_data)}行を{start_row}行目から書き込み")
+            logger.info(f"スプレッドシートに書き込み成功: {len(all_row_data)}行を{start_row}行目から書き込み (シート: {sheet_name})")
             for idx, row_data in enumerate(all_row_data):
-                logger.info(f"  問合せNo={row_data[0]}, 行={start_row + idx}")
+                logger.info(f"  No={row_data[0]}, 行={start_row + idx}")
         
         # 書き込んだ問合せNoのリストも返す
-        written_inquiry_nos = []
-        for idx in range(len(extracted_data_list)):
-            inquiry_no = max_inquiry_no + idx + 1
-            written_inquiry_nos.append(inquiry_no)
+        written_inquiry_nos = [max_inquiry_no + idx + 1 for idx in range(len(extracted_data_list))]
         
         return True, written_row_numbers, written_inquiry_nos
         
@@ -465,7 +542,13 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             text = re.sub(r"<@[A-Z0-9]+>\s*", "", text).strip()
             text = normalize_slack_mailto_links(text)
 
-            logger.info(f"メンションを受信: {text}")
+            # 課題管理キーワードの判定（1行目のみを対象とする）
+            # 本文中に【課題】等が含まれる誤検知を防ぐため、先頭行にキーワードがある場合のみ課題と判定
+            ISSUE_KEYWORDS = ["【課題事項】", "【課題】", "【SEJ案件課題】","課題：","課題事項：",
+                              "[課題事項]", "[課題]", "[SEJ案件課題]"]
+            first_line = text.splitlines()[0] if text else ""
+            is_issue = any(kw in first_line for kw in ISSUE_KEYWORDS)
+            logger.info(f"メンションを受信 (is_issue={is_issue}): {text}")
             
             # 文字数チェック（1000文字以内のみ受け付け）
             if len(text) > 1000:
@@ -517,7 +600,7 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             
             # Geminiで情報抽出
             try:
-                extracted_data_list = extract_info_with_gemini(text, inquirer_name)
+                extracted_data_list = extract_info_with_gemini(text, inquirer_name, is_issue=is_issue)
                 
                 # バリデーション: リストが空でないこと
                 if not extracted_data_list:
@@ -525,74 +608,104 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     send_slack_reply(channel, thread_ts, error_message)
                     return ("OK", 200)
                 
-                # バリデーション: タグに「アカウント管理」が含まれる場合のみ、target_emailが必須
-                for item in extracted_data_list:
-                    tags = item.get("tags", [])
-                    if isinstance(tags, list) and "アカウント管理" in tags:
-                        if not item.get("target_email"):
-                            error_message = "アカウント管理の依頼には対象者のメールアドレスが必要です。メールアドレスを含めて再度入力してください"
-                            send_slack_reply(channel, thread_ts, error_message)
-                            return ("OK", 200)
+                # バリデーション: 問合せ管理モードでタグに「アカウント管理」が含まれる場合のみ、target_emailが必須
+                # ただし1行目にメールアドレス不要・アカウント管理ではない旨の記載がある場合はスキップ
+                NO_EMAIL_REQUIRED_KEYWORDS = [
+                    "メールアドレス無し", "メールアドレスは不要", "メールアドレスは有りません",
+                    "メールアドレスはありません", "アカウント管理ではない", "アカウント管理ではありません",
+                ]
+                skip_email_validation = any(kw in first_line for kw in NO_EMAIL_REQUIRED_KEYWORDS)
+                if not is_issue and not skip_email_validation:
+                    for item in extracted_data_list:
+                        tags = item.get("tags", [])
+                        if isinstance(tags, list) and "アカウント管理" in tags:
+                            if not item.get("target_email"):
+                                error_message = "アカウント管理の依頼には対象者のメールアドレスが必要です。メールアドレスを含めて再度入力してください"
+                                send_slack_reply(channel, thread_ts, error_message)
+                                return ("OK", 200)
                 
                 # スプレッドシートに書き込み（複数件対応）
-                success, written_row_numbers, written_inquiry_nos = write_to_spreadsheet(inquirer_name, extracted_data_list, slack_url)
+                success, written_row_numbers, written_inquiry_nos = write_to_spreadsheet(
+                    inquirer_name, extracted_data_list, slack_url, is_issue=is_issue
+                )
                 
                 # スプレッドシートの範囲リンクを生成
-                # gidを取得
+                sheet_name_for_link = "課題管理" if is_issue else "問合せリスト"
+                last_col_for_link = "L" if is_issue else "P"
                 try:
                     credentials, _ = default()
                     gc = gspread.authorize(credentials)
                     spreadsheet = gc.open_by_key(SPREADSHEET_KEY)
-                    worksheet = spreadsheet.worksheet("問合せリスト")
-                    gid = worksheet.id  # gspreadのidプロパティでgidを取得
+                    worksheet = spreadsheet.worksheet(sheet_name_for_link)
+                    gid = worksheet.id
                 except:
-                    gid = 0  # デフォルト値
+                    gid = 0
                 
                 spreadsheet_url = f"https://docs.google.com/spreadsheets/d/{SPREADSHEET_KEY}/edit"
                 sheet_links = []
                 if written_row_numbers and written_inquiry_nos:
-                    # 書き込んだ行範囲のリンクを生成
                     min_row = min(written_row_numbers)
                     max_row = max(written_row_numbers)
                     min_inquiry_no = min(written_inquiry_nos)
                     max_inquiry_no = max(written_inquiry_nos)
+                    no_label = "課題No" if is_issue else "問合せNo"
                     
                     if min_row == max_row:
-                        # 1行のみの場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:P{min_row}"
-                        sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}>")
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:{last_col_for_link}{min_row}"
+                        sheet_links.append(f"<{range_link}|{no_label}{min_inquiry_no}>")
                     else:
-                        # 複数行の場合
-                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:P{max_row}"
-                        sheet_links.append(f"<{range_link}|問合せNo{min_inquiry_no}-{max_inquiry_no}>")
+                        range_link = f"{spreadsheet_url}#gid={gid}&range=A{min_row}:{last_col_for_link}{max_row}"
+                        sheet_links.append(f"<{range_link}|{no_label}{min_inquiry_no}-{max_inquiry_no}>")
                 
                 # 成功メッセージを作成（問合せ者へのメンションを追加）
                 mention_text = f"<@{user_id}> " if user_id else ""
-                success_message = f"{mention_text}お問合せ頂いた内容について、以下の通りスプレッドシートに{len(extracted_data_list)}件登録しました。認識相違が無いかご確認ください。\n"
+                count = len(extracted_data_list)
                 
-                # スプレッドシートリンクを追加
+                if is_issue:
+                    success_message = (
+                        f"{mention_text}ご報告いただいた課題について、以下の課題管理シートに{count}件登録しました。"
+                        f"内容をご確認の上、必要に応じて担当者のアサインをお願いします。\n"
+                    )
+                else:
+                    success_message = (
+                        f"{mention_text}お問合せ頂いた内容について、以下の通りスプレッドシートに{count}件登録しました。"
+                        f"認識相違が無いかご確認ください。\n"
+                    )
+                
                 if sheet_links:
                     success_message += f"\n📋 スプレッドシート: {', '.join(sheet_links)}\n"
                 
                 for idx, item in enumerate(extracted_data_list, 1):
-                    inquiry_no = written_inquiry_nos[idx - 1] if idx <= len(written_inquiry_nos) else ""
+                    entry_no = written_inquiry_nos[idx - 1] if idx <= len(written_inquiry_nos) else ""
+                    no_label = "課題No" if is_issue else "問合せNo"
                     success_message += f"\n【{idx}件目】"
-                    if inquiry_no:
-                        success_message += f" (問合せNo: {inquiry_no})"
+                    if entry_no:
+                        success_message += f" ({no_label}: {entry_no})"
                     success_message += "\n"
-                    if item.get("target_name"):
-                        success_message += f"対象者: {item.get('target_name')}\n"
-                    if item.get("target_email"):
-                        success_message += f"メールアドレス: {item.get('target_email')}\n"
-                    if item.get("due_date"):
-                        success_message += f"対応期日: {item.get('due_date')}\n"
-                    # タグを表示
-                    tags = item.get("tags", [])
-                    if isinstance(tags, list) and tags:
-                        # nullや空文字を除外してタグを表示
-                        valid_tags = [tag for tag in tags if tag and tag != "null"]
+                    
+                    if is_issue:
+                        if item.get("issue_title"):
+                            success_message += f"課題タイトル: {item.get('issue_title')}\n"
+                        raw_tags = item.get("tags", []) or []
+                        valid_tags = [t for t in raw_tags if t and t != "null"]
                         if valid_tags:
-                            success_message += f"タグ: {', '.join(valid_tags)}\n"
+                            success_message += f"カテゴリ/タグ: {', '.join(valid_tags)}\n"
+                        if item.get("priority"):
+                            success_message += f"優先度: {item.get('priority')}\n"
+                        if item.get("due_date"):
+                            success_message += f"目標解決日: {item.get('due_date')}\n"
+                    else:
+                        if item.get("target_name"):
+                            success_message += f"対象者: {item.get('target_name')}\n"
+                        if item.get("target_email"):
+                            success_message += f"メールアドレス: {item.get('target_email')}\n"
+                        if item.get("due_date"):
+                            success_message += f"対応期日: {item.get('due_date')}\n"
+                        tags = item.get("tags", [])
+                        if isinstance(tags, list) and tags:
+                            valid_tags = [tag for tag in tags if tag and tag != "null"]
+                            if valid_tags:
+                                success_message += f"タグ: {', '.join(valid_tags)}\n"
                 
                 send_slack_reply(channel, thread_ts, success_message)
                 
