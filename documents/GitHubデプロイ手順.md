@@ -2,6 +2,8 @@
 
 正本は GitHub の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で更新する。
 
+**続き作業（GitHub Actions 設置・GitLab 移行・メール抽出・モデル更新）**は個人OSの [`docs/pmo/sej-pmo-bot-cicd-handoff.md`](../../work2026/docs/pmo/sej-pmo-bot-cicd-handoff.md) を正本にする。このファイルはデプロイ手順のみ。
+
 ## 本番構成（固定）
 
 | 項目 | 値 |
