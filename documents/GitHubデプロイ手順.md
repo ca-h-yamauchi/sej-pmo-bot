@@ -19,20 +19,30 @@
 ## 通常の更新（CI/CD）
 
 1. 変更を `main` にマージして push する。
-2. Cloud Build トリガー `sej-pmo-bot-main` が [`cloudbuild.yaml`](../cloudbuild.yaml) を実行する。
+2. GitHub Actions `Deploy Cloud Run` が [`cloudbuild.yaml`](../cloudbuild.yaml) を `gcloud builds submit` する。
 3. 新リビジョンが Ready になることを確認する。`LOCATION=us-central1` と Secret 参照が残っていること。
 
 コンソールで Python を貼り付けてビルドする運用はしない。
 
-### 初回だけ: GitHub 接続
+認証は GitHub → Workload Identity Federation（サービスアカウント `sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com`）。キーファイルは使わない。`main` 以外のブランチからは GCP を偽装できない。
 
-Cloud Build 接続 `sej-pmo-bot-github`（`us-central1`）を GitHub アカウントで承認する。
+### 初回だけ: GitHub Actions ワークフローを置く
+
+ローカル PAT には `workflow` スコープがないため、ワークフローファイルは GitHub の Web から追加する。
+
+1. https://github.com/ca-h-yamauchi/sej-pmo-bot/new/main?filename=.github/workflows/deploy.yml を開く
+2. [`cloud_run_files/github-deploy.yml`](../cloud_run_files/github-deploy.yml) の内容を貼る
+3. `main` にコミットする（このコミットで初回の自動デプロイが走る）
+
+WIF（pool `github-pool` / provider `github-provider`）は設定済み。
+
+### 任意: Cloud Build ネイティブ GitHub 接続
+
+接続 `sej-pmo-bot-github`（`us-central1`）は PENDING_USER_OAUTH。承認すれば Cloud Build トリガーでも同じ YAML を回せる。
 
 1. [Cloud Build 接続](https://console.cloud.google.com/cloud-build/connections?project=test-yama-haj-2025) を開く
 2. `sej-pmo-bot-github` の案内リンクで GitHub を許可し、リポジトリ `ca-h-yamauchi/sej-pmo-bot` を選択する
-3. リポジトリルートから `./cloud_run_files/setup_github_trigger.sh` を実行する
-
-承認前の手動デプロイは `gcloud builds submit --config=cloudbuild.yaml --project=test-yama-haj-2025`（または `./cloud_run_files/deploy.sh`）。
+3. `./cloud_run_files/setup_github_trigger.sh` を実行する
 
 ## 手動デプロイ（フォールバック）
 
