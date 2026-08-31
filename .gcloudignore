@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+.env.*
+env/
+env_sej_pmo_bot/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.log
+cloud_run_files/cloud_run.yaml

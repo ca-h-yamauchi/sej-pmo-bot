@@ -1,0 +1,26 @@
+# main への push で本番 Cloud Run へデプロイする。
+# 環境変数・Secret・maxScale は既存リビジョンを継承する（上書きしない）。
+substitutions:
+  _REGION: us-central1
+  _SERVICE: slack-bot-handler-us
+  _FUNCTION: slack_bot_handler
+  _BASE_IMAGE: us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/python311
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 1200s
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --source=.
+      - --function=${_FUNCTION}
+      - --base-image=${_BASE_IMAGE}
+      - --region=${_REGION}
+      - --project=${PROJECT_ID}

@@ -5,6 +5,7 @@ Cloud Functions (第2世代) 用エントリーポイント
 import os
 import json
 import logging
+import secrets
 from typing import Dict, Any, Optional, List
 from datetime import datetime, timedelta, timezone
 from calendar import monthrange
@@ -27,12 +28,57 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 SPREADSHEET_KEY = os.environ.get("SPREADSHEET_KEY")
 PROJECT_ID = os.environ.get("PROJECT_ID")
-# デフォルトはasia-northeast1（日本リージョン）
-# 環境変数が設定されていない場合は、Cloud Runのリージョンに合わせる
-LOCATION = os.environ.get("LOCATION", "asia-northeast1")
+# 本番は us-central1（gemini-2.5-flash-lite は asia-northeast1 では利用不可）
+LOCATION = os.environ.get("LOCATION", "us-central1")
+CLOUD_RUN_REVISION = os.environ.get("K_REVISION", "local")
 
 # 署名検証用のインスタンス
 signature_verifier = SignatureVerifier(SLACK_SIGNING_SECRET) if SLACK_SIGNING_SECRET else None
+
+
+def generate_error_id() -> str:
+    """Cloud Logging と Slack 返信を突き合わせる短い ID を払う。"""
+    jst = timezone(timedelta(hours=9))
+    ts = datetime.now(jst).strftime("%Y%m%d-%H%M%S")
+    return f"{ts}-{secrets.token_hex(3)}"
+
+
+def sanitize_error_text(text: str, limit: int = 200) -> str:
+    """トークン類を伏せ、Slack 向けに短くする。"""
+    if not text:
+        return ""
+    redacted = re.sub(r"xox[baprs]-[A-Za-z0-9-]+", "[REDACTED]", text)
+    redacted = re.sub(r"(?i)(token|secret|authorization)[=:]\s*\S+", r"\1=[REDACTED]", redacted)
+    redacted = re.sub(r"\s+", " ", redacted).strip()
+    if len(redacted) > limit:
+        return redacted[:limit] + "…"
+    return redacted
+
+
+def classify_error_stage(tb_text: str) -> str:
+    """traceback から処理段階を推定する。"""
+    lowered = tb_text.lower()
+    if "extract_info_with_gemini" in tb_text or "vertexai" in lowered or "aiplatform" in lowered:
+        return "Gemini 抽出"
+    if "write_to_spreadsheet" in tb_text or "gspread" in lowered:
+        return "Sheets 書き込み"
+    if "send_slack_reply" in tb_text:
+        return "Slack 返信"
+    return "その他"
+
+
+def build_slack_error_message(error_id: str, stage: str, exc: BaseException) -> str:
+    """社内解析用の短いエラー文面を作る（機密は出さない）。"""
+    detail = sanitize_error_text(str(exc))
+    return (
+        "エラーが発生しました。しばらく時間をおいて再度お試しください。\n"
+        "解析用情報:\n"
+        f"- 発生箇所: {stage}\n"
+        f"- 例外: {type(exc).__name__}: {detail}\n"
+        f"- error_id: {error_id}\n"
+        f"- リビジョン: {CLOUD_RUN_REVISION}\n"
+        "Cloud Logging で error_id を検索してください。"
+    )
 
 
 def normalize_due_date(due_date_str: Optional[str]) -> Optional[str]:
@@ -548,7 +594,8 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                               "[課題事項]", "[課題]", "[SEJ案件課題]"]
             first_line = text.splitlines()[0] if text else ""
             is_issue = any(kw in first_line for kw in ISSUE_KEYWORDS)
-            logger.info(f"メンションを受信 (is_issue={is_issue}): {text}")
+            error_id = generate_error_id()
+            logger.info(f"メンションを受信 error_id={error_id} (is_issue={is_issue}): {text}")
             
             # 文字数チェック（1000文字以内のみ受け付け）
             if len(text) > 1000:
@@ -712,17 +759,24 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
             except Exception as e:
                 import traceback
                 error_detail = traceback.format_exc()
-                logger.error(f"処理中にエラーが発生: {str(e)}")
-                logger.error(f"エラー詳細:\n{error_detail}")
-                error_message = "エラーが発生しました。しばらく時間をおいて再度お試しください。"
+                stage = classify_error_stage(error_detail)
+                logger.error(
+                    f"処理中にエラーが発生 error_id={error_id} stage={stage} "
+                    f"revision={CLOUD_RUN_REVISION}: {str(e)}"
+                )
+                logger.error(f"エラー詳細 error_id={error_id}:\n{error_detail}")
+                error_message = build_slack_error_message(error_id, stage, e)
                 try:
                     send_slack_reply(channel, thread_ts, error_message)
-                except:
-                    pass
+                except Exception as reply_error:
+                    logger.error(
+                        f"エラー返信に失敗 error_id={error_id}: {str(reply_error)}"
+                    )
                 return ("OK", 200)
         
         return ("OK", 200)
         
     except Exception as e:
-        logger.error(f"予期しないエラー: {str(e)}")
+        unexpected_id = generate_error_id()
+        logger.error(f"予期しないエラー error_id={unexpected_id}: {str(e)}")
         return ("Internal Server Error", 500)

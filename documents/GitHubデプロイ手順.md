@@ -1,51 +1,53 @@
-# GitHubデプロイ手順
+# デプロイ手順
 
-## 1. GitHubリポジトリの作成
+正本は GitHub の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で更新する。
 
-1. GitHubにログインし、新しいリポジトリを作成します
-   - リポジトリ名: `sej-pmo-bot`（任意の名前で可）
-   - 公開/非公開: お好みで設定
-   - README、.gitignore、ライセンスは追加しない（既にローカルに存在するため）
+## 本番構成（固定）
 
-## 2. リモートリポジトリの追加とプッシュ
+| 項目 | 値 |
+|---|---|
+| GCP プロジェクト | `test-yama-haj-2025` |
+| サービス名 | `slack-bot-handler-us` |
+| リージョン | `us-central1` |
+| URL | https://slack-bot-handler-us-949120639074.us-central1.run.app |
+| 関数エントリ | `slack_bot_handler` |
+| Vertex AI `LOCATION` | `us-central1`（`gemini-2.5-flash-lite` は `asia-northeast1` では使えない） |
+| Slack トークン | Secret Manager（`BOT_SEJ_PMO_SLACK_BOT_TOKEN` / `BOT_SEJ_PMO_SLACK_SIGNING_SECRET`） |
 
-以下のコマンドを実行して、GitHubリポジトリにプッシュします：
+東京リージョンやサービス名 `slack-bot-handler`（接尾辞なし）へはデプロイしない。
 
-```bash
-# リモートリポジトリを追加
-git remote add origin https://github.com/ca-h-yamauchi/sej-pmo-bot.git
+## 通常の更新（CI/CD）
 
-# またはSSHを使用する場合
-git remote add origin git@github.com:ca-h-yamauchi/sej-pmo-bot.git
+1. 変更を `main` にマージして push する。
+2. Cloud Build トリガー `sej-pmo-bot-main` が [`cloudbuild.yaml`](../cloudbuild.yaml) を実行する。
+3. 新リビジョンが Ready になることを確認する。`LOCATION=us-central1` と Secret 参照が残っていること。
 
-# ブランチ名をmainに変更（GitHubのデフォルトに合わせる）
-git branch -M main
+コンソールで Python を貼り付けてビルドする運用はしない。
 
-# GitHubにプッシュ（認証が必要な場合はPersonal Access Tokenを使用）
-git push -u origin main
-```
+## 手動デプロイ（フォールバック）
 
-**リポジトリURL**: https://github.com/ca-h-yamauchi/sej-pmo-bot.git
-
-**注意**: GitHubへのプッシュには認証が必要です。Personal Access Token (PAT) を使用する場合は、パスワードの代わりにPATを入力してください。
-
-## 3. 今後の更新手順
-
-コードを変更した後は、以下のコマンドでGitHubに反映できます：
+CI が使えないときだけ、リポジトリルートから:
 
 ```bash
-# 変更をステージング
-git add .
-
-# コミット
-git commit -m "変更内容の説明"
-
-# GitHubにプッシュ
-git push
+# Linux / Git Bash
+./cloud_run_files/deploy.sh
 ```
 
-## 注意事項
+または:
 
-- `.env`ファイルや機密情報は`.gitignore`で除外されています
-- `env_sej_pmo_bot/`仮想環境ディレクトリも除外されています
-- `cloud_run_files/cloud_run.yaml`（機密情報を含む）も除外されています
+```bash
+gcloud run deploy slack-bot-handler-us \
+  --source . \
+  --function slack_bot_handler \
+  --base-image us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/python311 \
+  --region us-central1 \
+  --project test-yama-haj-2025
+```
+
+環境変数・Secret・maxScale はコマンドで渡さない（現行リビジョンを継承する）。
+
+## リポジトリ
+
+- URL: https://github.com/ca-h-yamauchi/sej-pmo-bot.git
+- `.env` と `cloud_run_files/cloud_run.yaml` は Git に含めない
+- 仮想環境 `env_sej_pmo_bot/` は `.gcloudignore` でアップロード対象外
