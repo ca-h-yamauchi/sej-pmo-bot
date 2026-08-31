@@ -24,6 +24,16 @@
 
 コンソールで Python を貼り付けてビルドする運用はしない。
 
+### 初回だけ: GitHub 接続
+
+Cloud Build 接続 `sej-pmo-bot-github`（`us-central1`）を GitHub アカウントで承認する。
+
+1. [Cloud Build 接続](https://console.cloud.google.com/cloud-build/connections?project=test-yama-haj-2025) を開く
+2. `sej-pmo-bot-github` の案内リンクで GitHub を許可し、リポジトリ `ca-h-yamauchi/sej-pmo-bot` を選択する
+3. リポジトリルートから `./cloud_run_files/setup_github_trigger.sh` を実行する
+
+承認前の手動デプロイは `gcloud builds submit --config=cloudbuild.yaml --project=test-yama-haj-2025`（または `./cloud_run_files/deploy.sh`）。
+
 ## 手動デプロイ（フォールバック）
 
 CI が使えないときだけ、リポジトリルートから:
