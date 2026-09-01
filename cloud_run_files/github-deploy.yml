@@ -18,5 +18,11 @@ jobs:
           workload_identity_provider: projects/949120639074/locations/global/workloadIdentityPools/github-pool/providers/github-provider
           service_account: sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Submit Cloud Build
-        run: gcloud builds submit --config=cloudbuild.yaml --project=test-yama-haj-2025
+      - name: Deploy Cloud Run
+        run: |
+          gcloud run deploy slack-bot-handler-us \
+            --source . \
+            --function slack_bot_handler \
+            --base-image us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/python311 \
+            --region us-central1 \
+            --project test-yama-haj-2025

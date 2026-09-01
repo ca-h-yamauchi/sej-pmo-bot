@@ -21,7 +21,7 @@
 ## 通常の更新（CI/CD）
 
 1. 変更を `main` にマージして push する。
-2. GitHub Actions `Deploy Cloud Run` が [`cloudbuild.yaml`](../cloudbuild.yaml) を `gcloud builds submit` する。
+2. GitHub Actions `Deploy Cloud Run` が `gcloud run deploy --source` で本番を更新する（env / Secret は上書きしない）。
 3. 新リビジョンが Ready になることを確認する。`LOCATION=us-central1` と Secret 参照が残っていること。
 
 コンソールで Python を貼り付けてビルドする運用はしない。
