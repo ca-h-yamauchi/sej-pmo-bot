@@ -1,0 +1,22 @@
+name: Deploy Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/949120639074/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+          service_account: sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Submit Cloud Build
+        run: gcloud builds submit --config=cloudbuild.yaml --project=test-yama-haj-2025
