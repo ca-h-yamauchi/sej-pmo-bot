@@ -25,4 +25,5 @@ jobs:
             --function slack_bot_handler \
             --base-image us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/python311 \
             --region us-central1 \
-            --project test-yama-haj-2025
+            --project test-yama-haj-2025 \
+            --update-env-vars LOCATION=global,GEMINI_MODEL=gemini-3.5-flash-lite

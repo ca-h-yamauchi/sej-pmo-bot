@@ -23,7 +23,7 @@ CA 社内向け Slack ボット。メンションされた依頼を Vertex AI（
 | Cloud Run | `slack-bot-handler-us` / **us-central1** |
 | URL | https://slack-bot-handler-us-949120639074.us-central1.run.app |
 | エントリ | `slack_bot_handler`（Python 3.11） |
-| モデル | `gemini-2.5-flash-lite`（`LOCATION=us-central1`。東京リージョンでは使えない） |
+| モデル | `gemini-3.5-flash-lite`（`LOCATION=global`。環境変数 `GEMINI_MODEL` で切替可） |
 | Slack トークン | Secret Manager（平文の環境変数に置かない） |
 | シート | 環境変数 `SPREADSHEET_KEY`（問合せリスト / 課題管理） |
 

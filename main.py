@@ -28,8 +28,10 @@ SLACK_BOT_TOKEN = os.environ.get("SLACK_BOT_TOKEN")
 SLACK_SIGNING_SECRET = os.environ.get("SLACK_SIGNING_SECRET")
 SPREADSHEET_KEY = os.environ.get("SPREADSHEET_KEY")
 PROJECT_ID = os.environ.get("PROJECT_ID")
-# 本番は us-central1（gemini-2.5-flash-lite は asia-northeast1 では利用不可）
-LOCATION = os.environ.get("LOCATION", "us-central1")
+# 本番の Vertex AI ロケーション（3.x 世代 Flash-Lite は global エンドポイントを使用）
+LOCATION = os.environ.get("LOCATION", "global")
+# 使用する Gemini モデル（デフォルト: 最新・高コスパの gemini-3.5-flash-lite）
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash-lite")
 CLOUD_RUN_REVISION = os.environ.get("K_REVISION", "local")
 
 # 署名検証用のインスタンス
@@ -280,16 +282,20 @@ def extract_info_with_gemini(text: str, inquirer_name: str, is_issue: bool = Fal
         抽出された情報の辞書のリスト（複数依頼に対応）
     """
     try:
-        # Vertex AI の初期化
-        logger.info(f"Vertex AI初期化: PROJECT_ID={PROJECT_ID}, LOCATION={LOCATION}")
-        aiplatform.init(project=PROJECT_ID, location=LOCATION)
+        # モデル名: 環境変数 GEMINI_MODEL で指定可能（デフォルト: gemini-3.5-flash-lite）
+        model_name = os.environ.get("GEMINI_MODEL", GEMINI_MODEL)
+
+        # ロケーションの決定（3.x 世代モデルは global エンドポイントが必須なため、非対応リージョン指定時は自動フォールバック）
+        current_location = os.environ.get("LOCATION", LOCATION)
+        if ("3." in model_name or "3-" in model_name) and current_location != "global":
+            logger.info(f"モデル {model_name} は global エンドポイントが必須のため、LOCATION={current_location} から global へ自動調整します。")
+            current_location = "global"
+
+        logger.info(f"Vertex AI初期化: PROJECT_ID={PROJECT_ID}, LOCATION={current_location}")
+        aiplatform.init(project=PROJECT_ID, location=current_location)
         
         from vertexai.generative_models import GenerativeModel
-        
-        # モデル名: gemini-2.5-flash-lite を使用（Gemini 1.5は廃止済み）
-        # リージョンによって利用可能なモデル名が異なる場合があります
-        model_name = "gemini-2.5-flash-lite"
-        logger.info(f"使用するモデル: {model_name} (リージョン: {LOCATION})")
+        logger.info(f"使用するモデル: {model_name} (リージョン: {current_location})")
         model = GenerativeModel(model_name)
         
         if is_issue:

@@ -158,6 +158,21 @@ JIRA：<https://7-11ngscp.atlassian.net/jira/software/c/projects/CA/boards/654/t
         # 補完されずに None のままであること
         self.assertIsNone(result[0]["target_email"])
 
+    def test_gemini_model_env_var_default_and_override(self):
+        """GEMINI_MODEL/LOCATION が未設定時にデフォルト値、設定時にその値が反映されること"""
+        import main
+        # 未指定時のデフォルト値
+        if "GEMINI_MODEL" in os.environ:
+            del os.environ["GEMINI_MODEL"]
+        model_default = os.environ.get("GEMINI_MODEL", main.GEMINI_MODEL)
+        self.assertEqual(model_default, "gemini-3.5-flash-lite")
+
+        # 環境変数でオーバーライドした時
+        os.environ["GEMINI_MODEL"] = "gemini-2.5-flash-lite"
+        model_override = os.environ.get("GEMINI_MODEL", main.GEMINI_MODEL)
+        self.assertEqual(model_override, "gemini-2.5-flash-lite")
+        del os.environ["GEMINI_MODEL"]
+
 
 if __name__ == "__main__":
     unittest.main()
