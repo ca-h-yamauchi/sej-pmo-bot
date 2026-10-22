@@ -183,6 +183,90 @@ def normalize_slack_mailto_links(text: str) -> str:
     )
 
 
+def extract_emails_from_text(text: str) -> List[str]:
+    """
+    テキストからメールアドレスを重複を除いて出現順に抽出する。
+    """
+    pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
+    found = re.findall(pattern, text)
+    seen = set()
+    unique_emails = []
+    for email in found:
+        cleaned = email.rstrip(".")
+        if cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            unique_emails.append(cleaned)
+    return unique_emails
+
+
+def fallback_target_email_with_regex(
+    extracted_data_list: List[Dict[str, Any]],
+    text: str,
+) -> List[Dict[str, Any]]:
+    """
+    Gemini で target_email が抽出されなかった場合（null または空）、
+    本文から正規表現でメールアドレスを拾って補完する。
+
+    安全機構（キルスイッチ）:
+    環境変数 ENABLE_EMAIL_REGEX_FALLBACK が 'false', '0', 'off', 'no' の場合は
+    一切の補完を行わず、元の抽出結果をそのまま返す（デグレード時の即時ロールバック用）。
+    """
+    kill_switch = os.environ.get("ENABLE_EMAIL_REGEX_FALLBACK", "true").lower()
+    if kill_switch in ("false", "0", "off", "no"):
+        logger.info("ENABLE_EMAIL_REGEX_FALLBACK が無効化されているため、メール正規表現フォールバックをスキップします。")
+        return extracted_data_list
+
+    if not extracted_data_list:
+        return extracted_data_list
+
+    all_emails = extract_emails_from_text(text)
+    if not all_emails:
+        return extracted_data_list
+
+    # 既に抽出済みのメールアドレスを把握
+    already_assigned = set()
+    for item in extracted_data_list:
+        e = item.get("target_email")
+        if e and isinstance(e, str) and e.strip():
+            already_assigned.add(e.strip().lower())
+
+    # 未使用のメールアドレス候補
+    available_emails = [e for e in all_emails if e.lower() not in already_assigned]
+    if not available_emails:
+        return extracted_data_list
+
+    # 単一依頼の場合（最頻パターン）
+    if len(extracted_data_list) == 1:
+        item = extracted_data_list[0]
+        if not item.get("target_email"):
+            picked = available_emails[0]
+            item["target_email"] = picked
+            logger.info(f"【正規表現フォールバック】単一依頼で target_email を補完しました: {picked}")
+        return extracted_data_list
+
+    # 複数依頼の場合
+    for item in extracted_data_list:
+        if not item.get("target_email") and available_emails:
+            target_name = item.get("target_name")
+            picked = None
+            # 対象者の名前が本文にあれば、その名前の直後に出現するメールを優先探索
+            if target_name and target_name in text:
+                name_idx = text.find(target_name)
+                for candidate in available_emails:
+                    cand_idx = text.find(candidate)
+                    if cand_idx >= name_idx:
+                        picked = candidate
+                        break
+            if not picked:
+                picked = available_emails[0]
+
+            item["target_email"] = picked
+            available_emails.remove(picked)
+            logger.info(f"【正規表現フォールバック】複数依頼で target_email を補完しました: target_name={target_name}, email={picked}")
+
+    return extracted_data_list
+
+
 def extract_info_with_gemini(text: str, inquirer_name: str, is_issue: bool = False) -> List[Dict[str, Any]]:
     """
     Vertex AI (Gemini 2.5 Flash Lite) を使用してテキストから情報を抽出する
@@ -654,6 +738,11 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     error_message = "情報を正しく読み取れませんでした。再度入力してください"
                     send_slack_reply(channel, thread_ts, error_message)
                     return ("OK", 200)
+
+                # メールアドレスの正規表現フォールバック（問合せ管理モード時）
+                # Gemini が target_email を null で返した場合でも、本文にメールがあれば補完
+                if not is_issue:
+                    extracted_data_list = fallback_target_email_with_regex(extracted_data_list, text)
                 
                 # バリデーション: 問合せ管理モードでタグに「アカウント管理」が含まれる場合のみ、target_emailが必須
                 # ただし1行目にメールアドレス不要・アカウント管理ではない旨の記載がある場合はスキップ

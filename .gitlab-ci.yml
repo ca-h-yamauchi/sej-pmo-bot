@@ -1,0 +1,44 @@
+# 草案（2026-10-15）。GitLab 側の WIF（pool/provider）作成と承認が済むまでは動かない。
+# GitHub Actions（.github/workflows/deploy.yml）と同じ gcloud run deploy を実行する。
+# 検証が済むまで GitHub Actions は止めない。初回は手動実行（when: manual）で二重デプロイを避ける。
+# 要確認: 会社の GitLab で使える runner（共有 runner か、専用か）。image が引けない場合は runner 側の制約を確認する。
+
+stages:
+  - deploy
+
+variables:
+  GCP_PROJECT_ID: test-yama-haj-2025
+  GCP_PROJECT_NUMBER: "949120639074"
+  GCP_REGION: us-central1
+  WIF_POOL: gitlab-pool          # 仮名。作成時に確定
+  WIF_PROVIDER: gitlab-provider  # 仮名。作成時に確定
+  DEPLOY_SA: sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com
+  CLOUDSDK_CORE_DISABLE_PROMPTS: "1"
+
+deploy_cloud_run:
+  stage: deploy
+  image: google/cloud-sdk:slim
+  id_tokens:
+    GCP_ID_TOKEN:
+      aud: https://iam.googleapis.com/projects/${GCP_PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}
+  script:
+    # トークンはジョブ内の一時ファイルにだけ置く。リポジトリには残さない。
+    - printf '%s' "$GCP_ID_TOKEN" > /tmp/gcp_id_token
+    - >
+      gcloud iam workload-identity-pools create-cred-config
+      "projects/${GCP_PROJECT_NUMBER}/locations/global/workloadIdentityPools/${WIF_POOL}/providers/${WIF_PROVIDER}"
+      --service-account="${DEPLOY_SA}"
+      --credential-source-file=/tmp/gcp_id_token
+      --output-file=/tmp/gcp_cred.json
+    - gcloud auth login --cred-file=/tmp/gcp_cred.json
+    - >
+      gcloud run deploy slack-bot-handler-us
+      --source .
+      --function slack_bot_handler
+      --base-image us-central1-docker.pkg.dev/serverless-runtimes/google-22/runtimes/python311
+      --region "${GCP_REGION}"
+      --project "${GCP_PROJECT_ID}"
+  rules:
+    # 初回検証: main でのみ、手動実行。動作確認後に when: on_success へ変更する。
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: manual

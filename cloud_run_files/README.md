@@ -1,6 +1,6 @@
 # Cloud Run 設定
 
-本番サービスは `slack-bot-handler-us`（`us-central1`）。正本は GitHub `main`、通常のデプロイは Cloud Build。
+本番サービスは `slack-bot-handler-us`（`us-central1`）。正本は GitHub `main`。通常のデプロイは GitHub Actions（`gcloud run deploy --source`）。
 
 ## ファイル構成
 

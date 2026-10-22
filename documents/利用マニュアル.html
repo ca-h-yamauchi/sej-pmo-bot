@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SEJ-PMO Bot 利用マニュアル</title>
+  <style>
+:root {
+  --fg: #1c2430;
+  --muted: #5a6573;
+  --accent: #1f4e79;
+  --border: #d5dce6;
+  --bg: #f6f8fb;
+  --card: #ffffff;
+}
+* { box-sizing: border-box; }
+html { font-size: 16px; }
+body {
+  margin: 0;
+  color: var(--fg);
+  background: var(--bg);
+  font-family: "Yu Gothic", "YuGothic", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif;
+  line-height: 1.7;
+}
+.wrap {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 32px 28px 64px;
+  background: var(--card);
+}
+.meta {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin: 0 0 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+h1, h2, h3 { color: var(--accent); line-height: 1.35; }
+h1 { font-size: 1.7rem; margin: 0 0 12px; }
+h2 {
+  font-size: 1.25rem;
+  margin: 36px 0 12px;
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--accent);
+}
+h3 { font-size: 1.05rem; margin: 24px 0 8px; }
+p, li { font-size: 0.98rem; }
+a { color: #1557b0; }
+code, pre {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+  font-size: 0.88rem;
+}
+code {
+  background: #eef2f7;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+pre {
+  background: #0f1720;
+  color: #e8eef6;
+  padding: 14px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+pre code { background: transparent; color: inherit; padding: 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0 20px;
+  font-size: 0.92rem;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: #e8eef6; color: var(--accent); }
+tr:nth-child(even) td { background: #f7f9fc; }
+blockquote {
+  margin: 12px 0;
+  padding: 8px 14px;
+  border-left: 4px solid var(--accent);
+  background: #eef3f8;
+  color: #334155;
+}
+.mermaid { margin: 20px 0; text-align: center; background: #fff; overflow-x: auto; }
+.mermaid svg { max-width: 100% !important; height: auto !important; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+@page { size: A4; margin: 14mm 12mm; }
+@media print {
+  body { background: #fff; }
+  .wrap { max-width: none; padding: 0; }
+  a { color: inherit; text-decoration: none; }
+  pre { white-space: pre-wrap; }
+  h2 { break-after: avoid; }
+  table, .mermaid { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+  <article class="wrap">
+    <p class="meta">人間向け表示。正本は Markdown（利用マニュアル.md）。更新日は本文に従う。</p>
+    <h1 id="sej-pmo-bot">SEJ-PMO Bot 利用マニュアル</h1>
+<p><strong>対象</strong>: CA 社内（SEJ-PMO および Bot にメンションする案件 PM 等）<br />
+<strong>更新</strong>: 2026-09-01<br />
+<strong>この文書</strong>: Slack での使い方。コード・デプロイは <a href="../README.html">README</a> と <a href="GitHubデプロイ手順.html">GitHubデプロイ手順</a>。人間向けの読み用は同フォルダの <code>利用マニュアル.html</code>（ブラウザで開く）。</p>
+<p>社内の作業台帳です。問合せ No.、Bot スレッド、シートの行内容は <strong>SEJ へ共有しない</strong>。</p>
+<hr />
+<h2 id="bot">何をする Bot か</h2>
+<p>Slack でメンションすると、本文から情報を抜き出し、<a href="https://docs.google.com/spreadsheets/d/16PlEFCHcnyqTtqEF0xa_N-ushSrwtGAN0VB6PL_3HZY/edit">問合せ管理スプレッドシート</a> に行を追加します。返信は同じスレッドに返ります。</p>
+<table>
+<thead>
+<tr>
+<th>モード</th>
+<th>いつ</th>
+<th>書き込み先</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>問合せ管理</strong>（既定）</td>
+<td>1行目に課題キーワードがない</td>
+<td>シート「問合せリスト」</td>
+</tr>
+<tr>
+<td><strong>課題管理</strong></td>
+<td>1行目に課題キーワードがある</td>
+<td>シート「課題管理」</td>
+</tr>
+</tbody>
+</table>
+<p>権限の付与そのものはしません。登録後の対応は PMO（山内・笠舞）が振り分けます。SEJ 側の操作が必要なときは、別途 Asana で依頼します。</p>
+<hr />
+<h2 id="_1">基本ルール</h2>
+<ol>
+<li>Bot が入っているチャンネルでメンションする。</li>
+<li>本文は <strong>1000 文字以内</strong>（超えると登録しない）。</li>
+<li><strong>1行目</strong>だけがモード判定と、メール必須の例外キーワードの対象。2行目以降に「【課題】」と書いても問合せ扱いになる。</li>
+<li>1通で複数人・複数件書いてよい。行が分かれて登録される。</li>
+<li>メールは <code>user@example.com</code> と書いてよい（Slack がリンク化しても Bot 側で平文に戻す）。</li>
+</ol>
+<hr />
+<h2 id="_2">問合せ管理（アカウント・作業依頼）</h2>
+<p>キーワードは不要。対象者の氏名と、アカウント系ならメールを書く。</p>
+<pre><code>@Bot 佐藤太郎さんの Slack アカウント作成をお願いします。SREチーム、sato.taro@example.com
+</code></pre>
+<p>複数人:</p>
+<pre><code>@Bot 佐藤太郎さんと田中花子さんの Asana 追加をお願いします。sato.taro@example.com、hanako.tanaka@example.com
+</code></pre>
+<p>自分自身:</p>
+<pre><code>@Bot 私のアカウント作成をお願いします。アプリチーム、myemail@example.com
+</code></pre>
+<p>Bot が取るもの: 対象氏名、メール、タグ（最大5）、対応期日、オーダ番号・オーダ名（書いてあるとき）、問合せ者（送信者）。</p>
+<p>新規行の進捗は「1.未着手」。以降のステータスはシートで手更新する。</p>
+<h3 id="_3">メールが必要なとき</h3>
+<p>タグに「アカウント管理」が付くと、対象者メールが必須です。無いと登録せず、再入力を求めます。</p>
+<p>メールが本当に不要な依頼は、<strong>1行目</strong>に次のいずれかを書く。</p>
+<ul>
+<li><code>メールアドレス無し</code></li>
+<li><code>メールアドレスは不要</code></li>
+<li><code>メールアドレスは有りません</code> / <code>メールアドレスはありません</code></li>
+<li><code>アカウント管理ではない</code> / <code>アカウント管理ではありません</code></li>
+</ul>
+<pre><code>@Bot メールアドレス無し
+〇〇さんの Asana アカウント状況を確認したい
+</code></pre>
+<p>本文にメールがあるのに「メールが必要」と返ることがある。そのときはメールを対象者の近くにもう一度書くか、1行目の例外キーワードを使う。</p>
+<hr />
+<h2 id="_4">課題管理</h2>
+<p><strong>1行目</strong>に次のいずれかを書く。</p>
+<ul>
+<li><code>【課題】</code> / <code>[課題]</code> / <code>課題：</code></li>
+<li><code>【課題事項】</code> / <code>[課題事項]</code> / <code>課題事項：</code></li>
+<li><code>【SEJ案件課題】</code> / <code>[SEJ案件課題]</code></li>
+</ul>
+<pre><code>@Bot 【課題】本番環境でログイン時にタイムアウトが多発しています。優先度 High。今週末までに一次切り分けしたいです。
+</code></pre>
+<p>複数件:</p>
+<pre><code>@Bot 【課題事項】
+1. Slack の通知が一部メンバーに届いていない
+2. スプレッドシートへの書き込みが稀に失敗する
+</code></pre>
+<p>Bot が取るもの: タイトル（20字以内の要約）、概要、カテゴリ/タグ、優先度（High / Mid / Low）、目標解決日、起票者。</p>
+<p>担当者・最新状況メモは空欄のまま登録される。シートで手入力する。課題モードではアカウント管理のメール必須チェックはしない。</p>
+<hr />
+<h2 id="_5">返信の見方</h2>
+<p>成功すると、登録件数とシートへのリンク、各件の要約が返る。認識が違えばシートを直す（Bot は既存行を上書きしない）。</p>
+<p>よくある失敗:</p>
+<table>
+<thead>
+<tr>
+<th>返信</th>
+<th>すること</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1000 文字超過</td>
+<td>短くして送り直す</td>
+</tr>
+<tr>
+<td>情報を正しく読み取れませんでした</td>
+<td>氏名・メール・依頼内容をはっきり書いて再送</td>
+</tr>
+<tr>
+<td>アカウント管理にはメールが必要</td>
+<td>対象者メールを足すか、1行目に例外キーワード</td>
+</tr>
+<tr>
+<td>エラーが発生しました + <code>error_id</code></td>
+<td>下の「うまくいかないとき」</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="pmo">PMO 向け（登録後）</h2>
+<ol>
+<li>シートで内容とタグを確認する。</li>
+<li>CA 内で完結する作業はそのまま進める。</li>
+<li>Asana / Slack / Box / Teams の権限が SEJ 側作業なら、古川様向け Asana サブタスクにする。問合せ No. は SEJ コメントに書かない。</li>
+<li>次世代 Slack / Jira / Confluence / Box は Asana 経由にしない。次世代アカウント手順に従う。</li>
+</ol>
+<hr />
+<h2 id="_6">うまくいかないとき</h2>
+<ol>
+<li>Bot がチャンネルに入っているか、メンションできているかを確認する。</li>
+<li>Slack の返信にある <code>error_id</code> を控える。</li>
+<li><a href="https://console.cloud.google.com/logs">Cloud Logging</a> でサービス <code>slack-bot-handler-us</code>（リージョン <code>us-central1</code>）を開き、<code>error_id=</code> で検索する。</li>
+<li>コード変更や再デプロイが必要なら <a href="../README.html">README</a> と <a href="GitHubデプロイ手順.html">GitHubデプロイ手順</a>。</li>
+</ol>
+<p>コンソールに Python を貼り付けて直さない。</p>
+  </article>
+  <script>document.documentElement.dataset.mermaidReady = "true";</script>
+</body>
+</html>

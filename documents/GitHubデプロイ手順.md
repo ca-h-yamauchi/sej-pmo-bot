@@ -1,8 +1,8 @@
 # デプロイ手順
 
-正本は GitHub の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で更新する。
+リポジトリ概要は [README](../README.md)。使い方は [利用マニュアル](利用マニュアル.md)。
 
-**続き作業（GitHub Actions 設置・GitLab 移行・メール抽出・モデル更新）**は個人OSの [`docs/pmo/sej-pmo-bot-cicd-handoff.md`](../../work2026/docs/pmo/sej-pmo-bot-cicd-handoff.md) を正本にする。このファイルはデプロイ手順のみ。
+正本は GitHub の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で更新する。このファイルはデプロイ手順のみ。
 
 ## 本番構成（固定）
 
@@ -28,15 +28,9 @@
 
 認証は GitHub → Workload Identity Federation（サービスアカウント `sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com`）。キーファイルは使わない。`main` 以外のブランチからは GCP を偽装できない。
 
-### 初回だけ: GitHub Actions ワークフローを置く
+### GitHub Actions（設置済み）
 
-ローカル PAT には `workflow` スコープがないため、ワークフローファイルは GitHub の Web から追加する。
-
-1. https://github.com/ca-h-yamauchi/sej-pmo-bot/new/main?filename=.github/workflows/deploy.yml を開く
-2. [`cloud_run_files/github-deploy.yml`](../cloud_run_files/github-deploy.yml) の内容を貼る
-3. `main` にコミットする（このコミットで初回の自動デプロイが走る）
-
-WIF（pool `github-pool` / provider `github-provider`）は設定済み。
+ワークフローは `.github/workflows/deploy.yml`（雛形は [`cloud_run_files/github-deploy.yml`](../cloud_run_files/github-deploy.yml)）。WIF（pool `github-pool` / provider `github-provider`）設定済み。初回成功は 2026-09-01（リビジョン `slack-bot-handler-us-00020-mw7`）。
 
 ### 任意: Cloud Build ネイティブ GitHub 接続
 
