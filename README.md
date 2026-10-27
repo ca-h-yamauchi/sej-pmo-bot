@@ -17,8 +17,9 @@ CA 社内向け Slack ボット。メンションされた依頼を Vertex AI（
 
 | 項目 | 値 |
 |---|---|
-| コード正本 | このリポジトリの `main` |
-| GitHub | https://github.com/ca-h-yamauchi/sej-pmo-bot |
+| コード正本 | GitLab `main` |
+| GitLab | https://gitlab.com/cloud-ace-jp/internal/engineering/consulting/int-ca-sej/int-ca-sej-pmo/int-ca-sej-pmo-bot |
+| GitHub (旧) | https://github.com/ca-h-yamauchi/sej-pmo-bot (アーカイブ/バックアップ用) |
 | GCP | `test-yama-haj-2025` |
 | Cloud Run | `slack-bot-handler-us` / **us-central1** |
 | URL | https://slack-bot-handler-us-949120639074.us-central1.run.app |
@@ -68,9 +69,9 @@ functions-framework --target=slack_bot_handler --port=8080
 
 ## デプロイ
 
-`main` へ push すると GitHub Actions が `gcloud run deploy --source` する。環境変数・Secret・maxScale は現行リビジョンを継承する。コンソールへ Python を貼り付けない。
+`main` へ push すると GitLab CI が `gcloud run deploy --source` する。環境変数・Secret・maxScale は現行リビジョンを継承する。コンソールへ Python を貼り付けない。
 
-手順: [documents/GitHubデプロイ手順.md](documents/GitHubデプロイ手順.md)
+手順: [documents/GitLabデプロイ手順.md](documents/GitLabデプロイ手順.md)（旧: GitHubデプロイ手順）
 
 CI が使えないときの手動デプロイ:
 
@@ -83,7 +84,7 @@ CI が使えないときの手動デプロイ:
 | ファイル | 用途 |
 |---|---|
 | [documents/利用マニュアル.md](documents/利用マニュアル.md) | Slack での使い方（CA 利用者・PMO） |
-| [documents/GitHubデプロイ手順.md](documents/GitHubデプロイ手順.md) | 本番への出し方 |
+| [documents/GitLabデプロイ手順.md](documents/GitLabデプロイ手順.md) | 本番への出し方（GitLab CI） |
 | [documents/設計書.md](documents/設計書.md) | 処理フロー・シート列・環境変数 |
 | [documents/要件定義書.md](documents/要件定義書.md) | 実装要件 |
 | [documents/ローカルテスト手順.md](documents/ローカルテスト手順.md) | ローカル起動 |

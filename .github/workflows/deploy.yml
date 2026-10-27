@@ -1,8 +1,9 @@
-name: Deploy Cloud Run
+# GitHub Actions は GitLab CI への移行完了（2026-10-27）に伴い停止済み。
+# 正本および CI/CD は GitLab (int-ca-sej-pmo-bot) を使用。
+name: Deploy Cloud Run (Archived)
 
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

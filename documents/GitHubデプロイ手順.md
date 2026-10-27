@@ -2,7 +2,7 @@
 
 リポジトリ概要は [README](../README.md)。使い方は [利用マニュアル](利用マニュアル.md)。
 
-正本は GitHub の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で更新する。このファイルはデプロイ手順のみ。
+正本は GitLab の `main`。本番 Cloud Run はコンソール貼り付けではなく、`main` への push で GitLab CI が更新する。このファイルはデプロイ手順のみ。
 
 ## 本番構成（固定）
 
@@ -13,32 +13,29 @@
 | リージョン | `us-central1` |
 | URL | https://slack-bot-handler-us-949120639074.us-central1.run.app |
 | 関数エントリ | `slack_bot_handler` |
-| Vertex AI `LOCATION` | `us-central1`（`gemini-2.5-flash-lite` は `asia-northeast1` では使えない） |
+| Vertex AI `LOCATION` | `global` |
+| Vertex AI モデル | `gemini-3.5-flash-lite`（環境変数 `GEMINI_MODEL`） |
 | Slack トークン | Secret Manager（`BOT_SEJ_PMO_SLACK_BOT_TOKEN` / `BOT_SEJ_PMO_SLACK_SIGNING_SECRET`） |
 
 東京リージョンやサービス名 `slack-bot-handler`（接尾辞なし）へはデプロイしない。
 
 ## 通常の更新（CI/CD）
 
-1. 変更を `main` にマージして push する。
-2. GitHub Actions `Deploy Cloud Run` が `gcloud run deploy --source` で本番を更新する（env / Secret は上書きしない）。
-3. 新リビジョンが Ready になることを確認する。`LOCATION=us-central1` と Secret 参照が残っていること。
+1. 変更を `main` にマージして push する（GitLab リモート）。
+2. GitLab CI `deploy_cloud_run` ジョブが `gcloud run deploy --source` で本番を自動更新する（env / Secret は上書きしない）。
+3. 新リビジョンが Ready になることを確認する。`LOCATION=global` と Secret 参照が残っていること。
 
 コンソールで Python を貼り付けてビルドする運用はしない。
 
-認証は GitHub → Workload Identity Federation（サービスアカウント `sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com`）。キーファイルは使わない。`main` 以外のブランチからは GCP を偽装できない。
+認証は GitLab → Workload Identity Federation（サービスアカウント `sej-pmo-bot-deploy@test-yama-haj-2025.iam.gserviceaccount.com`）。キーファイルは使わない。`main` 以外のブランチからは GCP を偽装できない。
 
-### GitHub Actions（設置済み）
+### GitLab CI（本番稼働）
 
-ワークフローは `.github/workflows/deploy.yml`（雛形は [`cloud_run_files/github-deploy.yml`](../cloud_run_files/github-deploy.yml)）。WIF（pool `github-pool` / provider `github-provider`）設定済み。初回成功は 2026-09-01（リビジョン `slack-bot-handler-us-00020-mw7`）。
+パイプライン設定は `.gitlab-ci.yml`。WIF（pool `gitlab-pool` / provider `gitlab-provider`）設定済み。初回成功は 2026-10-27（リビジョン `slack-bot-handler-us-00024-hc8`）。
 
-### 任意: Cloud Build ネイティブ GitHub 接続
+### GitHub Actions（アーカイブ）
 
-接続 `sej-pmo-bot-github`（`us-central1`）は PENDING_USER_OAUTH。承認すれば Cloud Build トリガーでも同じ YAML を回せる。
-
-1. [Cloud Build 接続](https://console.cloud.google.com/cloud-build/connections?project=test-yama-haj-2025) を開く
-2. `sej-pmo-bot-github` の案内リンクで GitHub を許可し、リポジトリ `ca-h-yamauchi/sej-pmo-bot` を選択する
-3. `./cloud_run_files/setup_github_trigger.sh` を実行する
+旧 GitHub Actions ワークフロー（`.github/workflows/deploy.yml`）は二重デプロイ防止のため `workflow_dispatch`（手動実行のみ）に切り替え済み。普段の push では動作しない。
 
 ## 手動デプロイ（フォールバック）
 
