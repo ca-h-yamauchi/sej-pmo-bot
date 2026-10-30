@@ -19,6 +19,8 @@ from google.cloud import aiplatform
 import gspread
 from google.auth import default
 
+import onboarding
+
 # ロギング設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -611,6 +613,150 @@ def send_slack_reply(channel: str, thread_ts: str, message: str) -> None:
         raise
 
 
+REGISTERED_MARKER = "[要員追加登録済み]"
+
+
+def handle_onboarding_flows(
+    channel: str,
+    event_ts: str,
+    event_thread_ts: Optional[str],
+    text: str,
+    first_line: str,
+    inquirer_name: str,
+    user_id: Optional[str],
+    slack_url: str,
+) -> bool:
+    """
+    要員追加（権限パック）まわりの3つの入口を処理する。処理した場合は True、
+    該当しない場合は False を返し、呼び出し側が従来の問合せ登録へ流す。
+
+      1. 【要員追加】  : 依頼を解析し、権限ごとの登録内容をプレビュー返信（台帳には書かない）
+      2. OK（スレ返信）: スレ内のプレビューを復元し、権限種別ごとに1行ずつ台帳へ登録
+      3. 【完了連絡】N : 台帳の該当行を読み、依頼元スレッドで本人へ確認依頼をメンション
+    """
+    client = WebClient(token=SLACK_BOT_TOKEN)
+    packs = onboarding.load_packs()
+
+    # --- 3. 完了連絡 -------------------------------------------------
+    if onboarding.is_completion_request(first_line):
+        numbers = onboarding.parse_completion_numbers(text)
+        if not numbers:
+            send_slack_reply(channel, event_ts, "完了連絡の問合せNoを読み取れませんでした。例: 【完了連絡】問合せNo 101, 102")
+            return True
+        credentials, _ = default()
+        gc = gspread.authorize(credentials)
+        worksheet = gc.open_by_key(SPREADSHEET_KEY).worksheet("問合せリスト")
+        rows = {str(r[0]).strip(): r for r in worksheet.get_all_values()[2:] if r and r[0]}
+        results = []
+        for no in numbers:
+            row = rows.get(str(no))
+            if not row:
+                results.append(f"No{no}: 台帳に見つかりません")
+                continue
+            row = row + [""] * (16 - len(row))
+            target = onboarding.parse_slack_url(row[4])
+            name, email = row[10], row[11]
+            mention = name or "ご担当者"
+            uid = None
+            if email:
+                try:
+                    uid = client.users_lookupByEmail(email=email)["user"]["id"]
+                except Exception as e:
+                    # users:read.email が無い環境では、氏名での一意照合に切り替える
+                    logger.warning(f"メールからSlackユーザーを特定できません。氏名で照合します: {e}")
+                    try:
+                        members, cursor = [], None
+                        for _ in range(20):
+                            resp = client.users_list(limit=200, cursor=cursor)
+                            members += resp["members"]
+                            cursor = (resp.get("response_metadata") or {}).get("next_cursor")
+                            if not cursor:
+                                break
+                        uid = onboarding.match_user_by_name(members, name, email)
+                    except Exception as e2:
+                        logger.warning(f"氏名での照合にも失敗: {e2}")
+            if uid:
+                mention = f"<@{uid}>"
+            if not target:
+                results.append(f"No{no}: 依頼元のSlack URLを読み取れず、連絡できません")
+                continue
+            try:
+                client.chat_postMessage(
+                    channel=target["channel"],
+                    thread_ts=target["thread_ts"],
+                    text=onboarding.build_completion_message(row, packs, mention),
+                )
+                results.append(f"No{no}（{row[7] or '権限'}）: 連絡しました")
+            except Exception as e:
+                logger.error(f"完了連絡の投稿に失敗 No{no}: {e}")
+                results.append(f"No{no}: 連絡の投稿に失敗しました（{e}）")
+        send_slack_reply(channel, event_ts, "完了連絡の結果:\n" + "\n".join(results))
+        return True
+
+    # --- 1. 要員追加の依頼 → プレビュー ---------------------------------
+    if onboarding.is_onboarding_request(first_line):
+        person = onboarding.parse_onboarding_request(text)
+        if person["missing"]:
+            send_slack_reply(
+                channel, event_ts,
+                "要員追加の依頼に、次の情報が足りません: " + "、".join(person["missing"]) +
+                "\n例:\n【要員追加】\n氏名: 酒谷 尋\nメール: sakatani.jin@cloud-ace.jp\nチーム: インフラ\n期日: 11/2",
+            )
+            return True
+        exclusions = onboarding.parse_exclusions(text)
+        entries = onboarding.expand_ledger_entries(person, packs, exclusions)
+        if not onboarding.is_direct_confirm(text):
+            send_slack_reply(channel, event_ts, onboarding.build_preview_message(person, entries, packs))
+            return True
+        # 「確定」行つき: プレビューなしで登録（スレッド履歴の権限が無くても動く）。
+        # 二重登録防止は、台帳に同じメールの【要員追加】行があるかで見る。
+        credentials, _ = default()
+        ws = gspread.authorize(credentials).open_by_key(SPREADSHEET_KEY).worksheet("問合せリスト")
+        dup = [str(r[0]) for r in ws.get_all_values()[2:]
+               if len(r) > 11 and r[11].strip().lower() == person["email"].lower() and "【要員追加】" in r[3]]
+        if dup:
+            send_slack_reply(channel, event_ts, f"{person['name']}さんの要員追加は、すでに台帳に登録されています（問合せNo: {', '.join(dup)}）。二重登録はしません。")
+            return True
+        success, rows_written, nos = write_to_spreadsheet(inquirer_name, entries, slack_url, is_issue=False)
+        mention_text = f"<@{user_id}> " if user_id else ""
+        lines = [f"{mention_text}{REGISTERED_MARKER} {person['name']}さんの権限を、権限種別ごとに{len(entries)}件登録しました。"]
+        for e, no in zip(entries, nos):
+            lines.append(f"問合せNo{no}: {e['tags'][2]}")
+        send_slack_reply(channel, event_ts, "\n".join(lines))
+        return True
+
+    # --- 2. OK 返信 → 台帳へ登録 -----------------------------------------
+    if event_thread_ts and event_thread_ts != event_ts and onboarding.is_confirmation(text):
+        try:
+            messages = client.conversations_replies(channel=channel, ts=event_thread_ts, limit=200)["messages"]
+        except Exception as e:
+            send_slack_reply(
+                channel, event_thread_ts,
+                f"スレッドの内容を読み取れませんでした（{e}）。Slack App の history 権限（channels:history / groups:history）を確認してください。",
+            )
+            return True
+        person = onboarding.find_preview_in_thread(messages)
+        if not person:
+            return False  # プレビューが無いスレッドの OK は、従来の問合せ登録に流す
+        if any(REGISTERED_MARKER in (m.get("text") or "") for m in messages):
+            send_slack_reply(channel, event_thread_ts, "このスレッドの要員追加は登録済みです。二重登録はしません。")
+            return True
+        exclusions = onboarding.parse_exclusions(text)
+        entries = onboarding.expand_ledger_entries(person, packs, exclusions)
+        parent_url = slack_url.rsplit("/p", 1)[0] + "/p" + event_thread_ts.replace(".", "") if slack_url else ""
+        success, rows_written, nos = write_to_spreadsheet(inquirer_name, entries, parent_url, is_issue=False)
+        mention_text = f"<@{user_id}> " if user_id else ""
+        lines = [f"{mention_text}{REGISTERED_MARKER} {person['name']}さんの権限を、権限種別ごとに{len(entries)}件登録しました。"]
+        if exclusions:
+            lines.append(f"（除外指定: {', '.join(exclusions)}）")
+        for e, no in zip(entries, nos):
+            lines.append(f"問合せNo{no}: {e['tags'][2]}")
+        send_slack_reply(channel, event_thread_ts, "\n".join(lines))
+        return True
+
+    return False
+
+
 @functions_framework.http
 def slack_bot_handler(request: Request) -> tuple[str, int]:
     """
@@ -735,6 +881,24 @@ def slack_bot_handler(request: Request) -> tuple[str, int]:
                     slack_url = f"https://app.slack.com/client/{team_id}/{channel}/p{ts_for_url}"
                     logger.info(f"Slack URL生成（フォールバック）: {slack_url}")
             
+            # 要員追加（権限パック）フロー: 専用キーワード / スレ内プレビューがあるときだけ動く。
+            # 該当しない場合は False が返り、下の従来の問合せ登録にそのまま流れる。
+            if not is_issue:
+                try:
+                    if handle_onboarding_flows(
+                        channel, thread_ts, event.get("thread_ts"), text, first_line,
+                        inquirer_name, user_id, slack_url,
+                    ):
+                        return ("OK", 200)
+                except Exception as e:
+                    import traceback
+                    logger.error(f"要員追加フローでエラー error_id={error_id}: {e}\n{traceback.format_exc()}")
+                    try:
+                        send_slack_reply(channel, thread_ts, f"要員追加の処理でエラーが発生しました（エラーID: {error_id}）。内容を確認します。")
+                    except Exception:
+                        pass
+                    return ("OK", 200)
+
             # Geminiで情報抽出
             try:
                 extracted_data_list = extract_info_with_gemini(text, inquirer_name, is_issue=is_issue)

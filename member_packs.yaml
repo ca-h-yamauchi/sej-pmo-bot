@@ -1,0 +1,154 @@
+# SEJ 新規参画者 権限パック定義（個人チェックリスト自動生成の元データ）
+#
+# 位置づけ: 「チーム別にどの権限・確認項目があるか」のルール表。
+#   - ポメPMが組合せ案を出し、山内さんが精緻化する（2026-10-29 方針）。
+#   - 正本の手順は docs/pmo/sej-member-add-playbook.md。ここは項目の一覧だけ。
+#   - 将来 SEJ-PMO Bot の「要員追加」意図が同じ定義を読む想定。
+#
+# status（根拠の確からしさ）:
+#   confirmed : 一次情報あり（source に記載）
+#   proposed  : 過去の運用から推定。山内さんの確認待ち
+#
+# owner: 誰が付与・申請するか（pmo = SEJ-PMO / team = 受入チーム / self = 本人）
+# check: 本人が確認する内容（ログイン・アクセスできるか）
+# secret: true の項目は初期パスワード等を伴う。DMは人間が行う。
+# ledger_tag: 指定がある項目は、Bot が問合せ台帳に 1 権限種別 = 1 行で起票する（タグ3に入る短い名前）。
+#   無い項目（本人・受入チーム担当）は台帳に起票しない。
+
+version: 1
+updated: 2026-10-29
+
+# packs: 適用するパック（上から順）。exclude: 除外する項目 id。
+teams:
+  infra:
+    label: インフラ
+    packs: [common, infra]
+  app:
+    label: アプリ
+    packs: [common, app]
+  looker:
+    label: Looker
+    packs: [common, looker]
+    exclude: [nextgen]   # Looker は次世代デフォルト不要（playbook）
+
+packs:
+  common:
+    - id: esa
+      category: 権限
+      title: SEJ esa（ca-sej.esa.io）にログインできる
+      owner: pmo
+      ledger_tag: esa
+      link: https://ca-sej.esa.io/
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: drive
+      category: 権限
+      title: CA内 SEJ Google Drive 共有フォルダが見える
+      owner: pmo
+      ledger_tag: SEJ Google Drive
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: asana_slack_box_teams
+      category: 権限
+      title: SEJ本体の Asana / Slack / Box / Teams にログインできる
+      owner: pmo
+      ledger_tag: Asana/Slack/Box/Teams
+      link:
+        - "Asana: https://app.asana.com/"
+        - "SEJ Slack: https://seven-eleven-japan.enterprise.slack.com/"
+      note: 各ツールの招待メールが届いたらログインしてください
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: gws_7central
+      category: 権限
+      title: 7central.jp の Google アカウントでログインできる
+      owner: pmo
+      ledger_tag: 7central.jp GWS
+      secret: true
+      note: 初期パスワードは、SEJ-PMOから別途DMでお渡しします
+      link: https://ca-sej.esa.io/posts/310
+      status: confirmed
+      source: .cursor/rules/sej-gws-yago-stamp.mdc
+    - id: gcp_groups_common
+      category: 権限
+      title: 7central.jp の Google Cloud グループ（全メンバー共通7件）に追加されている
+      owner: pmo
+      ledger_tag: Googleグループ(共通7件)
+      depends_on: gws_7central
+      self_check: false   # 本人の個別確認は不要。vpcsc 項目（GCP環境へアクセスできる）で確認する
+      groups:
+        - ca-dev@7central.jp
+        - ca-pi-all@7central.jp
+        - ca-pi-dev@7central.jp
+        - ca-scm-infra@7central.jp
+        - ca-sej-app-dev@7central.jp
+        - ca-mlops-crm-pi-admin@7central.jp
+        - ca-mlops-crm-pi-dev@7central.jp
+      status: confirmed
+      source: 山内さん指示 2026-10-29（全メンバー共通で必要）
+    - id: vpcsc
+      category: 権限
+      title: SEJ側 Google Cloud 環境へアクセスできる（VPCSC追加後）
+      owner: pmo
+      ledger_tag: VPCSC
+      link: https://console.cloud.google.com/
+      note: 7central.jp のアカウントでログインし、SEJ側のプロジェクトが見えるか確認してください
+      depends_on: gws_7central
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: entra
+      category: 権限
+      title: SEJ Entra ID にサインインできる
+      owner: self
+      ledger_tag: Entra ID
+      depends_on: gws_7central
+      note: 招待メールが届いたら、ご自身でサインインし、2段階認証を設定してください
+      link: https://ca-sej.esa.io/posts/344
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: github_emu
+      category: 権限
+      title: SEJ GitHub（EMU）にログインできる
+      owner: pmo
+      ledger_tag: GitHub EMU
+      depends_on: entra
+      status: confirmed
+      source: docs/pmo/sej-member-add-playbook.md
+    - id: nextgen
+      category: 権限
+      title: 次世代店舗システムの Slack / Jira / Confluence / Box にアクセスできる
+      owner: pmo
+      ledger_tag: 次世代店舗
+      link:
+        - "次世代 Slack: https://next-7store-system.slack.com/"
+        - "次世代 Jira/Confluence: https://7-11ngscp.atlassian.net/"
+      note: デフォルト4ツールのみ。追加の Jira プロジェクトが必要な場合は、受入チームが次世代の窓口へ確認
+      status: confirmed
+      source: .cursor/skills/sej-nextgen-account/SKILL.md
+    # 除外（2026-10-29 山内さん: SEJ-PMO の管轄外）: CA社内 Jira(ZYLY)、受入TL/PM連絡先の確認
+
+  infra:
+    - id: gcp_group_infra
+      category: 権限
+      title: 7central.jp の Google Cloud グループ（インフラ用）に追加されている
+      owner: pmo
+      ledger_tag: Googleグループ(ca-infra)
+      self_check: false   # 同上
+      groups:
+        - ca-infra@7central.jp
+      note: インフラ要員のみ。共通7グループに加えて必要
+      status: confirmed
+      source: 山内さん指示 2026-10-29
+    # 除外（2026-10-29 山内さん: SEJ-PMO の対象外）: 7central GitLab
+    - id: hcp_terraform
+      category: 権限
+      title: HCP Terraform にアクセスできる
+      owner: pmo
+      ledger_tag: HCP Terraform
+      # 内部メモ: インフラチームのみ必要（他チームの定義には入れない）。シートには出さない
+      status: confirmed
+      source: 山内さん指示 2026-10-29（HCP Terraform は SEJ-PMO で対応する）
+    # 除外（2026-10-29 山内さん: SEJ-PMO の管轄外）: GCP コンソールのヘッダー色拡張
+
+  app: []
+  looker: []
